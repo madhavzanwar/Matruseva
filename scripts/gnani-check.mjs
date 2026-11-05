@@ -9,6 +9,21 @@
 // Env: GNANI_API_KEYS (comma list) or GNANI_API_KEY, GNANI_BASE_URL (optional).
 // Exit codes: 0 all pass, 1 failure, 2 not configured.
 
+import { readFileSync } from "node:fs";
+
+// Load .env.local ourselves (works on any Node version; `node --env-file-if-exists`
+// needs a very recent Node). Real environment variables win over the file.
+try {
+  for (const line of readFileSync(".env.local", "utf8").split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
+    if (!m || line.trim().startsWith("#")) continue;
+    const value = m[2].replace(/^(['"])(.*)\1$/, "$2");
+    if (process.env[m[1]] === undefined) process.env[m[1]] = value;
+  }
+} catch {
+  // no .env.local: fall back to the process environment
+}
+
 const keys = `${process.env.GNANI_API_KEYS ?? ""},${process.env.GNANI_API_KEY ?? ""}`
   .split(/[\s,]+/).map((k) => k.trim()).filter(Boolean);
 const base = (process.env.GNANI_BASE_URL || "https://api.vachana.ai").replace(/\/+$/, "");
