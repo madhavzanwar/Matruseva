@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   buildAutomatedReminderMessage,
   detectLanguage,
@@ -8,9 +8,9 @@ import {
   handleIncomingWhatsAppMessage,
 } from "./whatsappBot";
 
-const inserts: Array<Record<string, unknown>> = [];
-vi.mock("@/lib/supabase/admin", () => ({
-  createAdminClient: () => ({
+const { inserts, makeAdminClient } = vi.hoisted(() => {
+  const inserts: Array<Record<string, unknown>> = [];
+  const makeAdminClient = () => ({
     from: (table: string) => {
       const q: Record<string, unknown> = {};
       const chain = () => q;
@@ -29,8 +29,10 @@ vi.mock("@/lib/supabase/admin", () => ({
       });
       return q;
     },
-  }),
-}));
+  });
+  return { inserts, makeAdminClient };
+});
+vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: makeAdminClient }));
 import {
   FOGSI_MOHFW_SCHEDULE_ITEMS,
   CLINICAL_RISK_THRESHOLDS,
@@ -139,6 +141,12 @@ describe("clinicalProtocols - FOGSI & MoHFW Accreditation", () => {
 });
 
 describe("handleIncomingWhatsAppMessage - phone matching", () => {
+  // doMock overrides the shared admin fake for the rest of the file unless restored.
+  afterEach(() => {
+    vi.doMock("@/lib/supabase/admin", () => ({ createAdminClient: makeAdminClient }));
+    vi.resetModules();
+  });
+
   const mockAdmin = (rows: unknown[]) => {
     const q = { select: () => q, eq: () => q, ilike: vi.fn(() => q), limit: vi.fn(async () => ({ data: rows, error: null })) };
     vi.doMock("@/lib/supabase/admin", () => ({ createAdminClient: () => ({ from: () => q }) }));

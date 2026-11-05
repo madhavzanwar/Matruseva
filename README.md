@@ -74,7 +74,7 @@ Demo mode is an explicit server-side opt-in and is **off by default**. With `DEM
 
 ## Deployment
 
-**Apply database migrations before deploying new code.** In particular `20261104000000_latest_visits_view.sql` creates the `latest_visits` view and `20261105000000_client_request_id.sql` adds the idempotency column the offline queue relies on, and `20261106000000_tts_audio_cache.sql` creates the private `tts-audio` bucket for cached counselling audio. The view is what the dashboard snapshot reads; if the code ships first, the snapshot silently shows no latest visits (no error). Run `npx supabase db push` first, then deploy.
+**Apply database migrations before deploying new code.** In particular `20261104000000_latest_visits_view.sql` creates the `latest_visits` view and `20261105000000_client_request_id.sql` adds the idempotency column the offline queue relies on, and `20261107000000_tts_audio_cache.sql` creates the private `tts-audio` bucket for cached counselling audio. The view is what the dashboard snapshot reads; if the code ships first, the snapshot silently shows no latest visits (no error). Run `npx supabase db push` first, then deploy.
 
 The app deploys to [Vercel](https://vercel.com) with no extra config — it auto-detects Next.js and runs `npm run build` (which already targets webpack, required by Serwist's PWA build; see `next.config.ts`).
 

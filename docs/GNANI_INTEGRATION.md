@@ -127,7 +127,7 @@ npm run gnani:check     # TTS → STT round trip in Hindi, Marathi and Gujarati,
 | STT route / status route | `app/api/gnani/stt`, `app/api/gnani/status` |
 | WAV encoder + recorder (browser) | `lib/audio/wav.ts`, `lib/audio/recorder.ts` |
 | Dictation UI + Devanagari parser | `components/VoiceScribeModalContent.tsx`, `lib/voiceScribe.ts`, `lib/voiceScribeDevanagari.ts` |
-| Counselling audio (manifest + mp3 parts, cache) | `lib/gnani/counselAudio.ts`, `lib/gnani/counselRoute.ts`, `app/api/gnani/tts/counsel`, `app/listen/[token]/audio`, migration `20261106000000_tts_audio_cache.sql` |
+| Counselling audio (manifest + mp3 parts, cache) | `lib/gnani/counselAudio.ts`, `lib/gnani/counselRoute.ts`, `app/api/gnani/tts/counsel`, `app/listen/[token]/audio`, migration `20261107000000_tts_audio_cache.sql` |
 | Players | `components/MotherAudioPlayer.tsx`, `components/VoiceCounselorModalBody.tsx`, `components/useCounselAudio.ts` |
 | WhatsApp voice notes | `app/api/whatsapp/webhook/route.ts`, `lib/whatsappVoice.ts`, `lib/whatsappMedia.ts`, `lib/whatsappBot.ts` |
 | Service worker never-cache rule | `app/sw.ts` |
