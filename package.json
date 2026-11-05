@@ -14,7 +14,7 @@
     "test:e2e": "playwright test",
     "db:validate": "node scripts/validate-sql.mjs",
     "db:seed": "node scripts/seed.mjs",
-    "gnani:check": "node --env-file-if-exists=.env.local scripts/gnani-check.mjs"
+    "gnani:check": "node scripts/gnani-check.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.9.1",
