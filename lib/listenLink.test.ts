@@ -22,7 +22,12 @@ describe("listen link tokens", () => {
     const [payload, sig] = token.split(".");
     const forged = Buffer.from(JSON.stringify({ p: "other", l: "hi", e: 9999999999 })).toString("base64url");
     expect(verifyListenToken(`${forged}.${sig}`)).toBeNull();
-    expect(verifyListenToken(`${payload}.${sig.slice(0, -2)}AA`)).toBeNull();
+    // Change the FIRST signature character: it always alters the decoded bytes. (Replacing the last
+    // characters is flaky: the final base64url char carries padding bits, so ~1/1000 of such
+    // "tampered" signatures decode to identical bytes.)
+    const flipped = (sig[0] === "A" ? "B" : "A") + sig.slice(1);
+    expect(verifyListenToken(`${payload}.${flipped}`)).toBeNull();
+    expect(verifyListenToken(`${payload}.${sig.slice(0, -4)}`)).toBeNull();
     expect(verifyListenToken(payload)).toBeNull();
     expect(verifyListenToken("")).toBeNull();
     expect(verifyListenToken("a.b.c")).toBeNull();
