@@ -88,3 +88,10 @@ export const messages: Record<Locale, Record<string, string>> = {
   hi: merge("hi"),
   mr: merge("mr"),
 };
+
+/** Merged catalogue for just the named areas, so public pages ship a small dictionary. */
+export function messagesForAreas(locale: Locale, names: readonly (keyof typeof AREAS)[]): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const n of names) Object.assign(out, AREAS[n][locale]);
+  return out;
+}

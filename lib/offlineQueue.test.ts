@@ -10,6 +10,7 @@ import {
   isNetworkError,
   nextRetryAt,
   pickPayload,
+  setOfflineUserId,
 } from "./offlineQueue";
 import { submitOrQueue } from "./offlineSubmit";
 import { setOfflineTranslator } from "./offlineI18n";
@@ -110,6 +111,19 @@ describe("flushQueue", () => {
     const res = await flushQueue(queue, async (e) => (order.push(e.id), { error: null }), { now });
     expect(order).toEqual(["id-1", "id-2"]);
     expect(res).toEqual({ sent: 2, failed: 0, stopped: false });
+    expect(await queue.list()).toEqual([]);
+  });
+
+  it("only replays the current user's entries and drops the rest", async () => {
+    const { queue, now } = setup();
+    setOfflineUserId("userA");
+    await queue.enqueue({ type: "visit", patientId: "p1", payload: {} });
+    setOfflineUserId("userB");
+    await queue.enqueue({ type: "visit", patientId: "p2", payload: {} });
+    setOfflineUserId(null);
+    const sent: string[] = [];
+    await flushQueue(queue, async (e) => (sent.push(e.patientId), { error: null }), { now, userId: "userB" });
+    expect(sent).toEqual(["p2"]);
     expect(await queue.list()).toEqual([]);
   });
 

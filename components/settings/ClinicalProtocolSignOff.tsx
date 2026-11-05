@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import {
   ShieldCheck,
-  CheckCircle,
+  WarningCircle,
   FileText,
   ArrowsClockwise,
   CalendarCheck,
@@ -53,8 +53,8 @@ export function ClinicalProtocolSignOff() {
                   {t("settings.signoff.title")}
                 </h4>
                 <span className="rounded-xl flex items-center gap-1 bg-white px-2 py-0.5 text-[11px] font-bold text-[var(--color-primary)] border border-[var(--color-primary)]/30">
-                  <CheckCircle size={13} weight="fill" />
-                  {CLINICAL_SIGN_OFF_METADATA.signOffStatus === "Approved & Certified" ? t("settings.signoff.statusApproved") : CLINICAL_SIGN_OFF_METADATA.signOffStatus}
+                  <WarningCircle size={13} weight="fill" />
+                  {t("settings.signoff.statusPending")}
                 </span>
               </div>
               <p className="mt-1 text-[12px] leading-relaxed text-[var(--color-foreground)]">
@@ -69,7 +69,7 @@ export function ClinicalProtocolSignOff() {
                 </span>
                 <span>
                   <strong>{t("settings.signoff.signatory")}</strong>{" "}
-                  {CLINICAL_SIGN_OFF_METADATA.certifiedBy === "Clinical Directorate (FOGSI / MoHFW Certified)" ? t("settings.signoff.signatoryName") : CLINICAL_SIGN_OFF_METADATA.certifiedBy}
+                  {CLINICAL_SIGN_OFF_METADATA.certifiedBy ?? t("settings.signoff.signatoryName")}
                 </span>
               </div>
             </div>

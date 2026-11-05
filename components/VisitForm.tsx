@@ -9,6 +9,7 @@ import type { ParsedVitals } from "@/lib/voiceScribe";
 import { Microphone, ShieldWarning, Warning, Heartbeat } from "@phosphor-icons/react";
 import { buttonSecondary } from "@/components/ui";
 import { useT } from "@/lib/i18n/provider";
+import { toISODate, todayInClinicTimezone } from "@/lib/today";
 
 const initialState: ActionResult = { error: null };
 const inputClass =
@@ -21,7 +22,7 @@ export function VisitForm({ patientId }: { patientId: string }) {
   const [isVoiceOpen, setIsVoiceOpen] = useState(false);
 
   // Controlled values for live CDSS protocol evaluation and voice auto-fill
-  const [visitDate, setVisitDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [visitDate, setVisitDate] = useState(() => toISODate(todayInClinicTimezone()));
   const [bpSys, setBpSys] = useState<string>("");
   const [bpDia, setBpDia] = useState<string>("");
   const [weight, setWeight] = useState<string>("");

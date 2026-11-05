@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useActionState, useEffect } from "react";
+import { toISODate, todayInClinicTimezone } from "@/lib/today";
 import {
   X,
   MagnifyingGlassPlus,
@@ -354,7 +355,7 @@ export function SplitScreenVisitWorkspace({
                   id="splitVisitDate"
                   name="visitDate"
                   type="date"
-                  defaultValue={new Date().toISOString().slice(0, 10)}
+                  defaultValue={toISODate(todayInClinicTimezone())}
                   className={inputClass}
                 />
               </div>

@@ -1,6 +1,6 @@
 import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { isDemoModeEnabled } from "@/lib/demo";
+import { isDemoModeEnabled, isSupabaseConfigured } from "@/lib/demo";
 import { COUNSELING_LANGUAGES, type CounselingLanguage } from "@/lib/voiceCounselor";
 
 /**
@@ -14,7 +14,7 @@ import { COUNSELING_LANGUAGES, type CounselingLanguage } from "@/lib/voiceCounse
 
 export const LISTEN_LINK_DEFAULT_TTL_SECONDS = 14 * 24 * 60 * 60;
 
-// Used ONLY when DEMO_MODE=1 and no secret is configured. Never applies in production.
+// Used ONLY for the pure offline demo (DEMO_MODE=1 and Supabase not configured). Never applies in production.
 const DEMO_DEV_SECRET = "matrusetu-demo-only-listen-link-secret";
 
 export class ListenLinkConfigError extends Error {
@@ -34,7 +34,7 @@ export interface ListenLinkPayload {
 function getSecret(): string {
   const secret = process.env.LISTEN_LINK_SECRET;
   if (secret) return secret;
-  if (isDemoModeEnabled()) return DEMO_DEV_SECRET;
+  if (isDemoModeEnabled() && !isSupabaseConfigured()) return DEMO_DEV_SECRET;
   throw new ListenLinkConfigError();
 }
 

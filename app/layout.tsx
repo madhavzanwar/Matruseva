@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { IBM_Plex_Sans, IBM_Plex_Mono, Noto_Sans_Devanagari } from "next/font/google";
 import "./globals.css";
 import { getLocale, getT } from "@/lib/i18n/server";
-import { messages } from "@/lib/i18n/messages";
+import { messagesForAreas } from "@/lib/i18n/messages";
 import { I18nProvider } from "@/lib/i18n/provider";
 
 const body = IBM_Plex_Sans({
@@ -43,6 +43,10 @@ export const viewport: Viewport = {
   themeColor: "#3e2a5c",
 };
 
+// Client components on public pages (auth forms, LanguageSwitcher, listen player) only need these;
+// the signed-in (app) layout supplies the full dictionary.
+const PUBLIC_AREAS = ["common", "auth", "shell"] as const;
+
 export default async function RootLayout({ children }: LayoutProps<"/">) {
   const locale = await getLocale();
   return (
@@ -51,7 +55,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
       className={`${body.variable} ${mono.variable} ${devanagari.variable} h-full antialiased`}
     >
       <body className="min-h-dvh flex flex-col">
-        <I18nProvider locale={locale} messages={messages[locale]}>
+        <I18nProvider locale={locale} messages={messagesForAreas(locale, PUBLIC_AREAS)}>
           {children}
         </I18nProvider>
       </body>

@@ -50,9 +50,19 @@ describe("listen link tokens", () => {
     expect(verifyListenToken("x.y")).toBeNull();
   });
 
-  it("uses a dev fallback only in demo mode", () => {
+  it("uses a dev fallback only in pure offline demo (demo mode, no Supabase)", () => {
     vi.stubEnv("LISTEN_LINK_SECRET", "");
     vi.stubEnv("DEMO_MODE", "1");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "");
     expect(verifyListenToken(createListenToken(PID, "hi"))?.patientId).toBe(PID);
+  });
+
+  it("fails closed in demo mode when Supabase is configured", () => {
+    vi.stubEnv("LISTEN_LINK_SECRET", "");
+    vi.stubEnv("DEMO_MODE", "1");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://abc.supabase.co");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "k");
+    expect(() => createListenToken(PID, "hi")).toThrow();
   });
 });

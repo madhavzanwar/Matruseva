@@ -63,6 +63,22 @@ describe("diffRegeneratedSchedule", () => {
     expect(diff.toInsert.map((e) => e.templateItemId)).toEqual(["anomaly_scan"]);
   });
 
+  it("flags open events no longer in the regenerated schedule to be skipped", () => {
+    const existing = [
+      { templateItemId: "anti_d", completedAt: null, manuallySkipped: false },
+      { templateItemId: "x_done", completedAt: new Date(2026, 1, 10), manuallySkipped: false },
+      { templateItemId: "x_manual", completedAt: null, manuallySkipped: true },
+    ];
+    expect(diffRegeneratedSchedule(regenerated, existing).toSkip).toEqual(["anti_d"]);
+  });
+
+  it("carries the regenerated skippedReason so late-booking events are re-dated", () => {
+    const late = generateSchedule(lmp, template, { rhNegative: false }, new Date(2026, 6, 1));
+    const existing = [{ templateItemId: "dating_scan", completedAt: null, manuallySkipped: false }];
+    const upd = diffRegeneratedSchedule(late, existing).toUpdateDates[0];
+    expect(upd.skippedReason).toBe("late_booking");
+  });
+
   it("leaves manually-skipped events untouched", () => {
     const existing = [
       { templateItemId: "dating_scan", completedAt: null, manuallySkipped: true },

@@ -14,6 +14,7 @@ import {
   getOfflineQueue,
   nextRetryAt,
   onQueueChange,
+  setOfflineUserId,
   type ActionOutcome,
   type QueueEntry,
 } from "@/lib/offlineQueue";
@@ -78,7 +79,7 @@ async function runExclusive(fn: () => Promise<void>) {
  * Replays queued offline writes (visits and contact logs) and shows a small
  * status pill. Mounted once from the (app) layout.
  */
-export function OfflineSync() {
+export function OfflineSync({ userId }: { userId: string }) {
   const router = useRouter();
   const t = useT();
   const locale = useLocale();
@@ -102,6 +103,10 @@ export function OfflineSync() {
     setOfflineTranslator(t);
   }, [t]);
 
+  useEffect(() => {
+    setOfflineUserId(userId);
+  }, [userId]);
+
   const flush = useCallback(async () => {
     if (!navigator.onLine) return;
     let sent = 0;
@@ -111,7 +116,7 @@ export function OfflineSync() {
       if ((await queue.list()).every((e) => e.status !== "pending")) return;
       setSyncing(true);
       try {
-        const res = await flushQueue(queue, send, { isOnline: () => navigator.onLine });
+        const res = await flushQueue(queue, send, { isOnline: () => navigator.onLine, userId });
         sent = res.sent;
         retryAt = nextRetryAt(await queue.list());
       } finally {
@@ -128,7 +133,7 @@ export function OfflineSync() {
     if (retryAt !== null) {
       timer.current = setTimeout(() => void flushRef.current(), Math.max(1_000, retryAt - Date.now()));
     }
-  }, [refresh, router, t]);
+  }, [refresh, router, t, userId]);
 
   useEffect(() => {
     flushRef.current = flush;

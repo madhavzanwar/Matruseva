@@ -1,6 +1,8 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import type { Database } from "./types";
+import { fetchWithTimeout } from "./fetch";
+import { getClaimsBounded, isSupabaseAuthCookie } from "./claims";
 import { isDemoSession, isSupabaseConfigured } from "@/lib/demo";
 
 // /offline must stay reachable with no session and no network round-trip —
@@ -26,6 +28,16 @@ function isListenPath(pathname: string): boolean {
 export async function updateSession(request: NextRequest) {
   let response = NextResponse.next({ request });
 
+  // The webhook verifies its own HMAC; skip the Supabase session round trip.
+  if (request.nextUrl.pathname.startsWith("/api/whatsapp")) return response;
+
+  // Public pages never read the session here (auth actions/callback set their own
+  // cookies), so skip the Supabase round trip — and any refresh stall — on them.
+  const { pathname } = request.nextUrl;
+  if (pathname === "/" || isListenPath(pathname) || PUBLIC_PATHS.some((path) => pathname.startsWith(path))) {
+    return response;
+  }
+
   // Demo bypass: only when the deployment opted in via DEMO_MODE=1.
   if (isDemoSession(request.cookies)) {
     return response;
@@ -45,6 +57,7 @@ export async function updateSession(request: NextRequest) {
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
+      global: { fetch: fetchWithTimeout() },
       cookies: {
         getAll() {
           return request.cookies.getAll();
@@ -65,18 +78,20 @@ export async function updateSession(request: NextRequest) {
   // getClaims() verifies the JWT locally (ES256 JWKS, cached) and only hits
   // the Auth server when the token needs refreshing — getUser() would add a
   // network round trip to every single request, including prefetches.
-  const { data } = await supabase.auth.getClaims();
-  const user = data?.claims.sub;
+  // Bounded: a failed refresh (e.g. Supabase unreachable) counts as signed out.
+  const { userId: user, failed } = await getClaimsBounded(supabase);
 
-  const isPublicPath =
-    request.nextUrl.pathname === "/" ||
-    isListenPath(request.nextUrl.pathname) ||
-    PUBLIC_PATHS.some((path) => request.nextUrl.pathname.startsWith(path));
-
-  if (!user && !isPublicPath) {
+  if (!user) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
-    return NextResponse.redirect(url);
+    const redirect = NextResponse.redirect(url);
+    // Drop the stale session cookies so the next request doesn't retry the slow refresh.
+    if (failed) {
+      for (const { name } of request.cookies.getAll()) {
+        if (isSupabaseAuthCookie(name)) redirect.cookies.delete(name);
+      }
+    }
+    return redirect;
   }
 
   return response;

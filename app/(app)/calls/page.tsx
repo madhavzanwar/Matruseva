@@ -21,17 +21,21 @@ const FILTER_IDS: CallFilter[] = ["all", "overdue", "at_risk", "lost", "pending"
 export default async function CallsPage({ searchParams }: { searchParams: Promise<{ f?: string }> }) {
   const { t } = await getT();
   const me = await getCurrentUser();
-  const supabase = await createClient();
+  const supabase = me.isDemo ? null : await createClient();
 
   const [{ f }, { rows, today }, { data: clinic }, { data: contacts }] = await Promise.all([
     searchParams,
     getClinicSnapshot(),
-    supabase.from("clinics").select("name, message_templates").eq("id", me.clinicId).single(),
     supabase
-      .from("contact_log")
-      .select("patient_id, outcome, channel, created_at")
-      .order("created_at", { ascending: false })
-      .limit(2000),
+      ? supabase.from("clinics").select("name, message_templates").eq("id", me.clinicId).single()
+      : { data: null },
+    supabase
+      ? supabase
+          .from("contact_log")
+          .select("patient_id, outcome, channel, created_at")
+          .order("created_at", { ascending: false })
+          .limit(2000)
+      : { data: null },
   ]);
   const templates = (clinic?.message_templates ?? {}) as MessageTemplates;
   const defaultLang = templates.default_lang ?? "en";

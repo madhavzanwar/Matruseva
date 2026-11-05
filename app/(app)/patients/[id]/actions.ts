@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getCurrentUser, isDemoActive } from "@/lib/auth";
 import { todayInClinicTimezone, toISODate } from "@/lib/today";
 import { formatDate, parseLocalDate } from "@/lib/format";
-import { closeDemoPregnancy, markDemoCareEventDone, recordDemoVisit, updateDemoPatient } from "@/lib/demo-data";
+import { closeDemoPregnancy, getDemoPatientDetail, markDemoCareEventDone, recordDemoVisit, updateDemoPatient } from "@/lib/demo-data";
 import { isDuplicateRequest } from "@/lib/idempotency";
 import { eddFromLmp } from "@/lib/pregnancy";
 import { getT } from "@/lib/i18n/server";
@@ -336,7 +336,7 @@ export async function updatePatient(
   // Fetch current patient record to check if LMP or Rh changed
   const { data: currentPatient, error: fetchErr } = await supabase
     .from("patients")
-    .select("lmp, edd, rh_negative")
+    .select("lmp, edd, rh_negative, status, pregnancy_status")
     .eq("id", patientId)
     .single();
 
@@ -381,7 +381,11 @@ export async function updatePatient(
   const lmpChanged = currentPatient.lmp !== input.lmp;
   const rhChanged = currentPatient.rh_negative !== input.rhNegative;
 
-  if (lmpChanged || rhChanged) {
+  const pregnancyOpen =
+    currentPatient.status !== "delivered" && currentPatient.status !== "closed" &&
+    currentPatient.pregnancy_status !== "delivered" && currentPatient.pregnancy_status !== "closed";
+
+  if ((lmpChanged || rhChanged) && pregnancyOpen) {
     const { data: template } = await supabase
       .from("schedule_templates")
       .select("id")
@@ -429,7 +433,11 @@ export async function updatePatient(
           .map((ce) => ({
             templateItemId: ce.template_item_id!,
             completedAt: ce.completed_at ? new Date(ce.completed_at) : null,
-            manuallySkipped: ce.skipped_reason !== null && ce.skipped_reason !== "late_booking",
+            // System-set skips can be reactivated by a later correction; only staff skips stick.
+            manuallySkipped:
+              ce.skipped_reason !== null &&
+              ce.skipped_reason !== "late_booking" &&
+              ce.skipped_reason !== "no_longer_applicable",
           }));
 
         const diff = diffRegeneratedSchedule(regenerated, existingForDiff);
@@ -441,9 +449,21 @@ export async function updatePatient(
             .update({
               due_from: toISODate(upd.dueFrom),
               due_to: toISODate(upd.dueTo),
+              skipped_reason: upd.skippedReason,
             })
             .eq("patient_id", patientId)
             .eq("template_item_id", upd.templateItemId)
+            .is("completed_at", null)
+            .or("skipped_reason.is.null,skipped_reason.eq.late_booking,skipped_reason.eq.no_longer_applicable");
+        }
+
+        // Items the corrected schedule no longer includes (e.g. Rh- -> Rh+ drops anti_d)
+        if (diff.toSkip.length > 0) {
+          await supabase
+            .from("care_events")
+            .update({ skipped_reason: "no_longer_applicable" })
+            .eq("patient_id", patientId)
+            .in("template_item_id", diff.toSkip)
             .is("completed_at", null)
             .is("skipped_reason", null);
         }
@@ -485,7 +505,10 @@ export async function createListenLink(patientId: string, lang: CounselingLangua
   if (!COUNSELING_LANGUAGES.some((l) => l.code === lang)) return { url: null, error: t("patientDetail.listen.unsupportedLanguage") };
   const me = await getCurrentUser(); // redirects to /login when signed out
 
-  if (!me.isDemo) {
+  if (me.isDemo) {
+    // Only sign ids that exist in the demo data.
+    if (!getDemoPatientDetail(patientId)) return { url: null, error: t("patientDetail.listen.patientNotFound") };
+  } else {
     if (!z.string().uuid().safeParse(patientId).success) return { url: null, error: t("patientDetail.listen.patientNotFound") };
     const supabase = await createClient();
     const { data: patient } = await supabase

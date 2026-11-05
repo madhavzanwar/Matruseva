@@ -18,6 +18,23 @@ const credentialsSchema = (t: Translator) =>
     password: z.string().min(8, t("auth.error.passwordLength")),
   });
 
+async function startDemoSession(): Promise<never> {
+  const cookieStore = await cookies();
+  cookieStore.set(DEMO_COOKIE, "1", {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    sameSite: "lax",
+    maxAge: 60 * 60 * 24 * 7,
+  });
+  redirect("/today");
+}
+
+export async function loginDemo(): Promise<void> {
+  if (!isDemoModeEnabled()) redirect("/login");
+  await startDemoSession();
+}
+
 export async function login(_prev: ActionResult, formData: FormData): Promise<ActionResult> {
   const { t } = await getT();
   const parsed = credentialsSchema(t).safeParse({
@@ -34,15 +51,7 @@ export async function login(_prev: ActionResult, formData: FormData): Promise<Ac
     parsed.data.email.toLowerCase() === DEMO_EMAIL &&
     parsed.data.password === DEMO_PASSWORD
   ) {
-    const cookieStore = await cookies();
-    cookieStore.set(DEMO_COOKIE, "1", {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      sameSite: "lax",
-      maxAge: 60 * 60 * 24 * 7,
-    });
-    redirect("/today");
+    await startDemoSession();
   }
 
   const supabase = await createClient();
@@ -62,6 +71,15 @@ export async function signup(_prev: ActionResult, formData: FormData): Promise<A
   });
   if (!parsed.success) {
     return { error: parsed.error.issues[0].message };
+  }
+
+  // Demo bypass mode: allow signing up with demo credentials
+  if (
+    isDemoModeEnabled() &&
+    parsed.data.email.toLowerCase() === DEMO_EMAIL &&
+    parsed.data.password === DEMO_PASSWORD
+  ) {
+    await startDemoSession();
   }
 
   const supabase = await createClient();

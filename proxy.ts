@@ -10,8 +10,8 @@ export const config = {
     /*
      * Match all request paths except:
      * - _next/static, _next/image (Next.js internals)
-     * - static assets (svg, png, jpg, etc.)
+     * - PWA/SEO files (service worker, robots, sitemap) and static assets
      */
-    "/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon.ico|manifest.webmanifest|sw\\.js$|swe-worker.*\\.js$|robots\\.txt$|sitemap\\.xml$|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|txt|xml|woff|woff2)$).*)",
   ],
 };

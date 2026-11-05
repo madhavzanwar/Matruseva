@@ -14,21 +14,23 @@ const OCR_STATUS = {
 } as const satisfies Record<string, { labelKey: string; tone: Tone }>;
 
 export default async function OpdRegisterPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
-  const [{ q }, me, supabase, { t, locale }] = await Promise.all([searchParams, getCurrentUser(), createClient(), getT()]);
+  const [{ q }, me, { t, locale }] = await Promise.all([searchParams, getCurrentUser(), getT()]);
   const searching = Boolean(q && q.trim());
+  // Demo sessions have no register pages; never hit Supabase.
+  const supabase = me.isDemo ? null : await createClient();
 
   let query = supabase
-    .from("documents")
+    ?.from("documents")
     .select("id, doc_date, storage_path, ocr_status, created_at")
     .eq("doc_type", "register_page")
     .order("doc_date", { ascending: false, nullsFirst: false })
     .order("created_at", { ascending: false })
     .limit(60);
-  if (searching) query = query.textSearch("search", q!, { type: "websearch", config: "simple" });
+  if (query && searching) query = query.textSearch("search", q!, { type: "websearch", config: "simple" });
 
-  const { data: pages } = await query;
+  const { data: pages } = query ? await query : { data: null };
   const list = pages ?? [];
-  const { data: signed } = list.length
+  const { data: signed } = supabase && list.length
     ? await supabase.storage.from("documents").createSignedUrls(list.map((p) => p.storage_path), 300)
     : { data: [] };
   const urlByPath = new Map((signed ?? []).map((s) => [s.path, s.signedUrl]));

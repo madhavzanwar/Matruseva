@@ -7,6 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useT } from "@/lib/i18n/provider";
 import type { MessageKey } from "@/lib/i18n/messages";
 
+const NO_PATIENTS: PatientHit[] = [];
 const OPEN_EVENT = "matrusetu:open-palette";
 
 export function openCommandPalette() {
@@ -37,12 +38,13 @@ const PAGES: { id: string; label: MessageKey; hint: MessageKey; href: string; ki
   { id: "a-new", label: "shell.palette.action.newPatient", hint: "shell.palette.hint.action", href: "/patients/new", kind: "action" },
 ];
 
-export function CommandPalette() {
+export function CommandPalette({ isDemo = false }: { isDemo?: boolean }) {
   const router = useRouter();
   const t = useT();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [patients, setPatients] = useState<PatientHit[] | null>(null);
+  const [fetched, setPatients] = useState<PatientHit[] | null>(null);
+  const patients = isDemo ? NO_PATIENTS : fetched;
   const [cursor, setCursor] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -70,6 +72,7 @@ export function CommandPalette() {
   useEffect(() => {
     if (!open) return;
     inputRef.current?.focus();
+    if (isDemo) return; // demo sessions never touch Supabase: pages/actions only, no patient results
     // One fetch per open; filtering then happens locally on every keystroke.
     createClient()
       .from("patients")
@@ -77,7 +80,7 @@ export function CommandPalette() {
       .eq("status", "active")
       .order("name")
       .then(({ data }) => setPatients(data ?? []));
-  }, [open]);
+  }, [open, isDemo]);
 
   const items = useMemo<Item[]>(() => {
     const q = query.trim().toLowerCase();

@@ -23,11 +23,12 @@ export interface RiskThresholdGuideline {
 }
 
 export const CLINICAL_SIGN_OFF_METADATA = {
-  certifiedBy: "Clinical Directorate (FOGSI / MoHFW Certified)",
+  certifiedBy: null as string | null,
   version: "2026.1-ANC",
   lastReviewed: "2026-09-30",
   accreditation: "FOGSI Good Clinical Practice Recommendations & MoHFW Antenatal Care Guidelines",
-  signOffStatus: "Approved & Certified",
+  // Flip only once the Clinical Lead has actually signed off (see lib/clinical.ts).
+  signedOff: false,
 };
 
 export const FOGSI_MOHFW_SCHEDULE_ITEMS: ClinicalProtocolItem[] = [

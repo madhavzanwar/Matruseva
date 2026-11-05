@@ -21,6 +21,8 @@ export interface QueueEntry {
   id: string;
   type: QueueEntryType;
   patientId: string;
+  /** Signed-in user who queued this; entries are only replayed for the same user. */
+  userId: string | null;
   payload: QueuePayload;
   createdAt: number;
   attempts: number;
@@ -189,6 +191,13 @@ export interface OfflineQueue {
   clear(): Promise<void>;
 }
 
+let currentUserId: string | null = null;
+
+/** Set by OfflineSync so entries queued from anywhere in the app are tagged with the signed-in user. */
+export function setOfflineUserId(id: string | null) {
+  currentUserId = id;
+}
+
 export function createQueue(storage: QueueStorage, deps: QueueDeps = {}): OfflineQueue {
   const now = deps.now ?? Date.now;
   const uuid = deps.uuid ?? (() => crypto.randomUUID());
@@ -209,6 +218,7 @@ export function createQueue(storage: QueueStorage, deps: QueueDeps = {}): Offlin
         id: id ?? uuid(),
         type,
         patientId,
+        userId: currentUserId,
         payload: pickPayload(type, payload),
         // strictly increasing so FIFO is stable even within the same millisecond
         createdAt: Math.max(now(), maxCreated + 1),
@@ -257,11 +267,17 @@ export interface FlushResult {
 export async function flushQueue(
   queue: OfflineQueue,
   send: (entry: QueueEntry) => Promise<ActionOutcome>,
-  opts: { now?: () => number; isOnline?: () => boolean } = {},
+  opts: { now?: () => number; isOnline?: () => boolean; userId?: string } = {},
 ): Promise<FlushResult> {
   const now = opts.now ?? Date.now;
   const result: FlushResult = { sent: 0, failed: 0, stopped: false };
-  for (const entry of pendingEntries(await queue.list())) {
+  const all = await queue.list();
+  if (opts.userId !== undefined) {
+    // Never replay another user's (or untagged legacy) writes under this session: drop them.
+    for (const e of all) if (e.userId !== opts.userId) await queue.remove(e.id);
+  }
+  for (const entry of pendingEntries(all)) {
+    if (opts.userId !== undefined && entry.userId !== opts.userId) continue;
     // An older entry still backing off blocks everything behind it (FIFO).
     if (entry.nextAttemptAt > now()) {
       result.stopped = true;

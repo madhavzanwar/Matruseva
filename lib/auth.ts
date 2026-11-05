@@ -3,6 +3,7 @@ import { cache } from "react";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
+import { getClaimsBounded } from "@/lib/supabase/claims";
 import { isDemoSession } from "@/lib/demo";
 
 export interface CurrentUser {
@@ -36,8 +37,7 @@ export const getCurrentUser = cache(async (): Promise<CurrentUser> => {
   }
 
   const supabase = await createClient();
-  const { data } = await supabase.auth.getClaims();
-  const userId = data?.claims.sub;
+  const { userId } = await getClaimsBounded(supabase);
   if (!userId) redirect("/login");
 
   const { data: profile } = await supabase

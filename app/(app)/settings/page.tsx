@@ -16,19 +16,23 @@ import { getT } from "@/lib/i18n/server";
 import { careEventName } from "@/lib/clinicalLabels";
 
 export default async function SettingsPage() {
-  const [me, supabase, { t }] = await Promise.all([getCurrentUser(), createClient(), getT()]);
+  const [me, { t }] = await Promise.all([getCurrentUser(), getT()]);
   if (me.role !== "doctor") redirect("/today");
 
-  const [{ data: clinic }, { data: staff }, { data: template }] = await Promise.all([
-    supabase.from("clinics").select("*").eq("id", me.clinicId).single(),
-    supabase.from("profiles").select("id, full_name, role").eq("clinic_id", me.clinicId).order("full_name"),
-    supabase
-      .from("schedule_templates")
-      .select("id, schedule_template_items(id, name, window_start_week, window_end_week, is_critical, sort_order)")
-      .eq("clinic_id", me.clinicId)
-      .eq("is_default", true)
-      .maybeSingle(),
-  ]);
+  // Demo sessions have no clinic rows: skip Supabase and show the demo empty state.
+  const supabase = me.isDemo ? null : await createClient();
+  const [{ data: clinic }, { data: staff }, { data: template }] = supabase
+    ? await Promise.all([
+        supabase.from("clinics").select("*").eq("id", me.clinicId).single(),
+        supabase.from("profiles").select("id, full_name, role").eq("clinic_id", me.clinicId).order("full_name"),
+        supabase
+          .from("schedule_templates")
+          .select("id, schedule_template_items(id, name, window_start_week, window_end_week, is_critical, sort_order)")
+          .eq("clinic_id", me.clinicId)
+          .eq("is_default", true)
+          .maybeSingle(),
+      ])
+    : [{ data: null }, { data: null }, { data: null }];
   if (!clinic) {
     return (
       <>

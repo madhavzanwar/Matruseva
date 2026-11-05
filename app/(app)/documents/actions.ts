@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentUser } from "@/lib/auth";
 import { getT } from "@/lib/i18n/server";
 
 export interface ActionResult {
@@ -17,6 +18,7 @@ const assignSchema = (choosePatient: string) => z.object({
 });
 
 export async function assignDocument(documentId: string, _prev: ActionResult, formData: FormData): Promise<ActionResult> {
+  await getCurrentUser();
   const { t } = await getT();
   const raw = Object.fromEntries(formData.entries());
   const parsed = assignSchema(t("documents.error.choosePatient")).safeParse(raw);
@@ -56,6 +58,7 @@ export async function assignDocument(documentId: string, _prev: ActionResult, fo
 const patientSearchSchema = z.string().min(1);
 
 export async function searchPatientsForAssign(query: string) {
+  await getCurrentUser();
   const parsed = patientSearchSchema.safeParse(query);
   if (!parsed.success) return [];
 
@@ -72,6 +75,7 @@ export async function searchPatientsForAssign(query: string) {
 }
 
 export async function getOpenCareEvents(patientId: string) {
+  await getCurrentUser();
   const supabase = await createClient();
   const { data } = await supabase
     .from("care_event_status")

@@ -103,7 +103,7 @@ h1, h2, h3, h4 {
 /*
   Devanagari (Hindi, Marathi): matras and headline strokes sit above/below the
   Latin line box, so tight leading clips them, and negative tracking collides
-  conjuncts. Unlayered rules beat the Tailwind leading-*/tracking-* utilities.
+  conjuncts. Unlayered rules beat the Tailwind leading and tracking utilities.
 */
 :lang(hi) body, :lang(mr) body { line-height: 1.65; }
 :lang(hi) h1, :lang(hi) h2, :lang(hi) h3, :lang(hi) h4,

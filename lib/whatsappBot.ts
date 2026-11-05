@@ -242,14 +242,24 @@ export async function handleIncomingWhatsAppMessage({
   const { createAdminClient } = await import("@/lib/supabase/admin");
   const admin = createAdminClient();
 
-  // Find patient by ID or by normalized phone
+  const unknownSender = (error: string): BotProcessResult => ({
+    success: false,
+    replyText: "Patient record not found in MatruSetu directory.",
+    actionTaken: "fallback",
+    patientId: "",
+    patientName: "",
+    error,
+  });
+
+  // Find patient by ID or by phone
   let patientQuery = admin.from("patients").select("id, name, clinic_id, phone, status");
   if (patientId) {
     patientQuery = patientQuery.eq("id", patientId);
   } else if (phone) {
-    const rawDigits = phone.replace(/\D/g, "");
-    const last10 = rawDigits.slice(-10);
-    patientQuery = patientQuery.ilike("phone", `%${last10}%`);
+    // patients.phone is stored as typed (not normalized), so anchor on the last 10 digits.
+    const last10 = phone.replace(/\D/g, "").slice(-10);
+    if (last10.length < 10) return unknownSender("Invalid phone number");
+    patientQuery = patientQuery.ilike("phone", `%${last10}`);
   } else {
     return {
       success: false,
@@ -261,16 +271,14 @@ export async function handleIncomingWhatsAppMessage({
     };
   }
 
-  const { data: patients, error: patientErr } = await patientQuery.limit(1);
+  const { data: patients, error: patientErr } = await patientQuery.limit(2);
   if (patientErr || !patients || patients.length === 0) {
-    return {
-      success: false,
-      replyText: "Patient record not found in MatruSetu directory.",
-      actionTaken: "fallback",
-      patientId: "",
-      patientName: "",
-      error: patientErr?.message || "Patient not found",
-    };
+    return unknownSender(patientErr?.message || "Patient not found");
+  }
+  if (!patientId && patients.length > 1) {
+    // Same number on several records (maybe different clinics): never guess.
+    console.warn("[whatsappBot] ambiguous sender phone matched multiple patients; ignoring message");
+    return unknownSender("Patient not found");
   }
 
   const patient = patients[0];

@@ -22,19 +22,21 @@ const SOURCE_KEY = {
 } as const;
 
 export default async function DocumentsPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
-  const [{ q }, me, supabase, { t, locale }] = await Promise.all([searchParams, getCurrentUser(), createClient(), getT()]);
+  const [{ q }, me, { t, locale }] = await Promise.all([searchParams, getCurrentUser(), getT()]);
   const searching = Boolean(q && q.trim());
+  // Demo sessions have no documents; never hit Supabase.
+  const supabase = me.isDemo ? null : await createClient();
 
   let query = supabase
-    .from("documents")
+    ?.from("documents")
     .select("id, doc_type, source, storage_path, ocr_status, created_at, patient_id, patients(name)")
     .order("created_at", { ascending: false })
     .limit(50);
-  query = searching ? query.textSearch("search", q!, { type: "websearch", config: "simple" }) : query.is("patient_id", null);
+  if (query) query = searching ? query.textSearch("search", q!, { type: "websearch", config: "simple" }) : query.is("patient_id", null);
 
-  const { data: documents } = await query;
+  const { data: documents } = query ? await query : { data: null };
   const docs = documents ?? [];
-  const { data: signed } = docs.length
+  const { data: signed } = supabase && docs.length
     ? await supabase.storage.from("documents").createSignedUrls(docs.map((d) => d.storage_path), 300)
     : { data: [] };
   const urlByPath = new Map((signed ?? []).map((s) => [s.path, s.signedUrl]));

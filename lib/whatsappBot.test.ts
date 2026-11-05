@@ -134,7 +134,32 @@ describe("clinicalProtocols - FOGSI & MoHFW Accreditation", () => {
   it("specifies certified clinical risk thresholds: 7d at-risk, 21d lost", () => {
     expect(CLINICAL_RISK_THRESHOLDS.atRiskDays).toBe(7);
     expect(CLINICAL_RISK_THRESHOLDS.lostDays).toBe(21);
-    expect(CLINICAL_SIGN_OFF_METADATA.signOffStatus).toContain("Certified");
+    expect(CLINICAL_SIGN_OFF_METADATA.signedOff).toBe(false);
+  });
+});
+
+describe("handleIncomingWhatsAppMessage - phone matching", () => {
+  const mockAdmin = (rows: unknown[]) => {
+    const q = { select: () => q, eq: () => q, ilike: vi.fn(() => q), limit: vi.fn(async () => ({ data: rows, error: null })) };
+    vi.doMock("@/lib/supabase/admin", () => ({ createAdminClient: () => ({ from: () => q }) }));
+    return q;
+  };
+
+  it("does not act when the phone matches more than one patient", async () => {
+    vi.resetModules();
+    const q = mockAdmin([
+      { id: "a", name: "A", clinic_id: "c1", phone: "9876543210", status: "active" },
+      { id: "b", name: "B", clinic_id: "c2", phone: "+919876543210", status: "active" },
+    ]);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { handleIncomingWhatsAppMessage: handle } = await import("./whatsappBot");
+    const res = await handle({ phone: "+91 98765 43210", messageText: "1" });
+    expect(res.success).toBe(false);
+    expect(res.patientId).toBe("");
+    expect(q.ilike).toHaveBeenCalledWith("phone", "%9876543210");
+    expect(q.limit).toHaveBeenCalledWith(2);
+    expect(warn.mock.calls.flat().join(" ")).not.toContain("9876543210");
+    warn.mockRestore();
   });
 });
 

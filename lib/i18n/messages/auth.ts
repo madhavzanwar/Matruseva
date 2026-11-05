@@ -19,6 +19,9 @@ export const auth = defineArea({
     "auth.login.title": "Sign in",
     "auth.login.subtitle": "Welcome back to your clinic",
     "auth.login.submit": "Sign in",
+    "auth.login.demoButton": "Demo sign in",
+    "auth.login.noAccount": "Don't have an account?",
+    "auth.login.signUp": "Sign up",
 
     "auth.signup.title": "Set up your clinic",
     "auth.signup.subtitle": "Create an account for your OB-GYN practice",
@@ -62,6 +65,9 @@ export const auth = defineArea({
     "auth.login.title": "साइन इन करें",
     "auth.login.subtitle": "अपने क्लिनिक में वापसी पर स्वागत है",
     "auth.login.submit": "साइन इन करें",
+    "auth.login.demoButton": "डेमो साइन इन करें",
+    "auth.login.noAccount": "खाता नहीं है?",
+    "auth.login.signUp": "साइन अप करें",
 
     "auth.signup.title": "अपना क्लिनिक सेट अप करें",
     "auth.signup.subtitle": "अपने OB-GYN क्लिनिक के लिए खाता बनाएँ",
@@ -105,6 +111,9 @@ export const auth = defineArea({
     "auth.login.title": "साइन इन करा",
     "auth.login.subtitle": "तुमच्या क्लिनिकमध्ये पुन्हा स्वागत आहे",
     "auth.login.submit": "साइन इन करा",
+    "auth.login.demoButton": "डेमो साइन इन करा",
+    "auth.login.noAccount": "खाते नाही का?",
+    "auth.login.signUp": "साइन अप करा",
 
     "auth.signup.title": "तुमचे क्लिनिक सेट अप करा",
     "auth.signup.subtitle": "तुमच्या OB-GYN क्लिनिकसाठी खाते तयार करा",

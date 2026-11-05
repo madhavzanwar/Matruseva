@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   closeDemoPregnancy,
   logDemoBatchContacts,
@@ -6,7 +6,11 @@ import {
   getDemoPatientDetail,
   getDemoContactStats,
   getDemoDeliveriesThisMonthCount,
+  resetDemoStore,
 } from "./demo-data";
+
+beforeAll(() => resetDemoStore());
+afterAll(() => resetDemoStore());
 
 describe("FEATURE 1: Delivery Outcome Recording & Pregnancy Closure", () => {
   it("closes an active pregnancy, records delivery details, and marks open care events as skipped", () => {

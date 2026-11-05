@@ -74,7 +74,9 @@ export interface ScheduleDiff {
   /** template items with no matching existing row: insert as-is */
   toInsert: GeneratedCareEvent[];
   /** existing rows whose dates should be updated to the regenerated window */
-  toUpdateDates: Array<{ templateItemId: string; dueFrom: Date; dueTo: Date }>;
+  toUpdateDates: Array<{ templateItemId: string; dueFrom: Date; dueTo: Date; skippedReason: string | null }>;
+  /** open existing items the regenerated schedule no longer includes (e.g. Rh- corrected to Rh+): skip, don't let them go overdue */
+  toSkip: string[];
 }
 
 /**
@@ -89,6 +91,10 @@ export function diffRegeneratedSchedule(
   const existingByItem = new Map(existing.map((e) => [e.templateItemId, e]));
   const toInsert: GeneratedCareEvent[] = [];
   const toUpdateDates: ScheduleDiff["toUpdateDates"] = [];
+  const regeneratedIds = new Set(regenerated.map((r) => r.templateItemId));
+  const toSkip = existing
+    .filter((e) => !regeneratedIds.has(e.templateItemId) && !e.completedAt && !e.manuallySkipped)
+    .map((e) => e.templateItemId);
 
   for (const item of regenerated) {
     const match = existingByItem.get(item.templateItemId);
@@ -101,8 +107,9 @@ export function diffRegeneratedSchedule(
       templateItemId: item.templateItemId,
       dueFrom: item.dueFrom,
       dueTo: item.dueTo,
+      skippedReason: item.skippedReason,
     });
   }
 
-  return { toInsert, toUpdateDates };
+  return { toInsert, toUpdateDates, toSkip };
 }
