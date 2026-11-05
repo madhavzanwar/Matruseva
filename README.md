@@ -43,6 +43,7 @@ npx supabase db push
 | `npm run typecheck` | `next typegen` then `tsc --noEmit` |
 | `npm test` / `npm run test:watch` | Unit tests (Vitest; 14 files, 95 tests) |
 | `npm run db:validate` | Offline SQL syntax check for migrations |
+| `npm run gnani:check` | Real-key smoke test: Timbre → Prisma round trip in Hindi, Marathi and Gujarati |
 | `npm run db:seed` | Seed a demo clinic with synthetic patients (needs `SUPABASE_SERVICE_ROLE_KEY`) |
 | `npm run test:e2e` | Playwright golden-path test (needs a running dev server + live Supabase credentials — not run in CI, see `playwright.config.ts`) |
 
@@ -61,6 +62,9 @@ Copy `.env.example` to `.env.local`. Nothing below has an insecure default: if a
 | `LISTEN_LINK_SECRET` | Yes (production) | **Server-only** | HMAC key for the signed `/listen/<token>` links. No default; link creation and verification fail closed without it. Generate with `openssl rand -base64 32`. Rotating it invalidates every link already sent |
 | `WHATSAPP_VERIFY_TOKEN` | For the webhook | **Server-only** | Any long random string; must match what you enter in Meta's webhook setup. No default |
 | `WHATSAPP_APP_SECRET` | For the webhook | **Server-only** | Meta app secret; used to verify `X-Hub-Signature-256` on every POST. No default; POST returns 503 without it |
+| `GNANI_API_KEYS` | Optional | **Server-only** | Gnani AI keys (comma-separated pool; the 3 free keys can all be listed). Enables Prisma speech-to-text dictation, Timbre counselling audio and WhatsApp voice notes. Without it the app uses the browser's speech APIs. See `docs/GNANI_INTEGRATION.md` |
+| `GNANI_ENABLED`, `GNANI_BASE_URL`, `GNANI_STT_MODEL`, `GNANI_TTS_MODEL`, `GNANI_TTS_VOICE_FEMALE/MALE`, `GNANI_*_PER_MINUTE`, `GNANI_*_DAILY_*` | Optional | **Server-only** | Kill switch, endpoint/model/voice overrides and per-user/global rate and credit budgets (defaults in `.env.example`) |
+| `WHATSAPP_VOICE_REPLIES`, `GNANI_WA_LANGS` | Optional | **Server-only** | Send a spoken (Timbre) copy of bot replies; STT language hints for incoming voice notes |
 | `WHATSAPP_API_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID` | Optional | **Server-only** | If both are set, bot replies are sent back through the Graph API; otherwise the webhook only records the outcome |
 | `DEMO_MODE` | Optional | **Server-only** | `1` enables demo mode (below). Leave unset in production |
 
@@ -70,7 +74,7 @@ Demo mode is an explicit server-side opt-in and is **off by default**. With `DEM
 
 ## Deployment
 
-**Apply database migrations before deploying new code.** In particular `20261104000000_latest_visits_view.sql` creates the `latest_visits` view and `20261105000000_client_request_id.sql` adds the idempotency column the offline queue relies on. The view is what the dashboard snapshot reads; if the code ships first, the snapshot silently shows no latest visits (no error). Run `npx supabase db push` first, then deploy.
+**Apply database migrations before deploying new code.** In particular `20261104000000_latest_visits_view.sql` creates the `latest_visits` view and `20261105000000_client_request_id.sql` adds the idempotency column the offline queue relies on, and `20261107000000_tts_audio_cache.sql` creates the private `tts-audio` bucket for cached counselling audio. The view is what the dashboard snapshot reads; if the code ships first, the snapshot silently shows no latest visits (no error). Run `npx supabase db push` first, then deploy.
 
 The app deploys to [Vercel](https://vercel.com) with no extra config — it auto-detects Next.js and runs `npm run build` (which already targets webpack, required by Serwist's PWA build; see `next.config.ts`).
 
@@ -95,6 +99,7 @@ Auth/onboarding (email/password + Google OAuth), patient registration with auto-
 Also in the app:
 
 - **Hindi and Marathi staff UI**: the whole app (landing, auth, dashboard, patients, visits, call queue, documents, OPD, settings, reports) is available in English, हिन्दी and मराठी. Switch with the language control in the sidebar (stored in the `ms_locale` cookie). Catalogues live in `lib/i18n/messages/` with compile-time and test-time key parity; see `docs/I18N.md` and `lib/i18n/GLOSSARY.md`. **The Hindi/Marathi wording has not been clinician- or native-speaker-reviewed** and must be before clinical use.
+- **Gnani AI voice (optional)**: staff dictation uses Prisma STT (browser → 16 kHz WAV → server → Gnani, with a Devanagari-aware vitals parser), counselling audio for mothers and staff is synthesised by Timbre (cached, served as mp3 parts), and the WhatsApp bot understands voice notes (with a broad danger-sign screen). Every feature falls back to the browser's speech APIs when Gnani is not configured or unavailable. Verify a real key with `npm run gnani:check`. Architecture and limits: `docs/GNANI_INTEGRATION.md`.
 - **Offline write queue**: recording a visit or logging a contact while offline (or when the request can't reach the server) saves it in the browser's IndexedDB and replays it when the connection returns, with a status pill, retry/discard for failures, and an idempotency key (`client_request_id`) so replays never duplicate (`lib/offlineQueue.ts`, `components/OfflineSync.tsx`). See `docs/SECURITY.md` for what is stored.
 - **WhatsApp bot**: reminders and replies (confirm / reschedule / info; English, Hindi, Marathi) via the signed `/api/whatsapp/webhook`, plus an in-app simulator on the call queue that uses the authenticated `processBotReply` server action, not the webhook (`lib/whatsappBot.ts`).
 - **Voice counselling**: generates a counselling script in Hindi, Marathi, Gujarati or English from the patient's data (`lib/voiceCounselor.ts`); the doctor can create a signed public listen link for the mother.

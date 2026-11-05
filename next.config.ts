@@ -35,11 +35,21 @@ const nextConfig: NextConfig = {
       },
       {
         // Public signed listen links: the token is in the URL, so keep it out of Referer, caches and indexes.
-        source: "/listen/:path*",
+        // The page itself is never cached.
+        source: "/listen/:token",
         headers: [
           { key: "Referrer-Policy", value: "no-referrer" },
           { key: "X-Robots-Tag", value: "noindex, nofollow" },
           { key: "Cache-Control", value: "private, no-store" },
+        ],
+      },
+      {
+        // The counselling audio route sets its own Cache-Control (no-store for manifests and errors,
+        // private + immutable for audio parts), so it is deliberately not given one here.
+        source: "/listen/:token/audio",
+        headers: [
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
         ],
       },
       {

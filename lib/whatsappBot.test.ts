@@ -1,8 +1,38 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   buildAutomatedReminderMessage,
   detectLanguage,
+  detectIntent,
+  detectDangerSign,
+  detectReplyLanguage,
+  handleIncomingWhatsAppMessage,
 } from "./whatsappBot";
+
+const { inserts, makeAdminClient } = vi.hoisted(() => {
+  const inserts: Array<Record<string, unknown>> = [];
+  const makeAdminClient = () => ({
+    from: (table: string) => {
+      const q: Record<string, unknown> = {};
+      const chain = () => q;
+      Object.assign(q, {
+        select: chain,
+        eq: chain,
+        ilike: chain,
+        is: chain,
+        order: chain,
+        limit: async () => ({ data: table === "patients" ? [{ id: "p1", name: "Sunita", clinic_id: "c1", phone: "9" }] : [], error: null }),
+        single: async () => ({ data: { name: "Clinic", phone: "1" } }),
+        insert: async (row: Record<string, unknown>) => {
+          inserts.push(row);
+          return { error: null };
+        },
+      });
+      return q;
+    },
+  });
+  return { inserts, makeAdminClient };
+});
+vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: makeAdminClient }));
 import {
   FOGSI_MOHFW_SCHEDULE_ITEMS,
   CLINICAL_RISK_THRESHOLDS,
@@ -111,6 +141,12 @@ describe("clinicalProtocols - FOGSI & MoHFW Accreditation", () => {
 });
 
 describe("handleIncomingWhatsAppMessage - phone matching", () => {
+  // doMock overrides the shared admin fake for the rest of the file unless restored.
+  afterEach(() => {
+    vi.doMock("@/lib/supabase/admin", () => ({ createAdminClient: makeAdminClient }));
+    vi.resetModules();
+  });
+
   const mockAdmin = (rows: unknown[]) => {
     const q = { select: () => q, eq: () => q, ilike: vi.fn(() => q), limit: vi.fn(async () => ({ data: rows, error: null })) };
     vi.doMock("@/lib/supabase/admin", () => ({ createAdminClient: () => ({ from: () => q }) }));
@@ -132,5 +168,116 @@ describe("handleIncomingWhatsAppMessage - phone matching", () => {
     expect(q.limit).toHaveBeenCalledWith(2);
     expect(warn.mock.calls.flat().join(" ")).not.toContain("9876543210");
     warn.mockRestore();
+  });
+});
+
+describe("detectIntent - typed behaviour is unchanged", () => {
+  it.each([
+    ["1", "confirm"], ["१", "confirm"], ["yes", "confirm"], ["haan", "confirm"], ["होय मी येणार", "confirm"], ["आऊंगी", "confirm"],
+    ["2", "reschedule"], ["२", "reschedule"], ["call me", "reschedule"], ["मदद चाहिए", "reschedule"], ["कॉल करो", "reschedule"],
+    ["3", "info"], ["३", "info"], ["scan instructions", "info"], ["जांच की तैयारी", "info"],
+    ["hello", "fallback"], ["", "fallback"],
+  ])("%s -> %s", (text, intent) => {
+    expect(detectIntent(text)).toBe(intent);
+  });
+});
+
+describe("detectIntent - Prisma transcripts (Devanagari / Gujarati)", () => {
+  it.each([
+    ["हाँ मैं आऊँगी", "confirm"],
+    ["हाँ मैं आऊँगी।", "confirm"],
+    ["हो येणार आहे", "confirm"],
+    ["हो, येणार आहे.", "confirm"],
+    ["હા હું આવીશ", "confirm"],
+    ["हां", "confirm"],
+    ["एक", "confirm"],
+    ["एक नंबर", "confirm"],
+    ["एक नंबर।", "confirm"],
+    ["विकल्प एक", "confirm"],
+    ["એક", "confirm"],
+    ["one", "confirm"],
+    ["ek", "confirm"],
+    ["दो", "reschedule"],
+    ["दोन", "reschedule"],
+    ["બે", "reschedule"],
+    ["two.", "reschedule"],
+    ["दो नंबर", "reschedule"],
+    ["तारीख बदलना है", "reschedule"],
+    ["तारीख बदलनी होगी", "reschedule"],
+    ["फोन करा", "reschedule"],
+    ["मुझे फ़ोन करो", "reschedule"],
+    ["ડેટ બદલો", "reschedule"],
+    ["કોલ કરો", "reschedule"],
+    ["तीन", "info"],
+    ["तीन नंबर", "info"],
+    ["ત્રણ", "info"],
+    ["three", "info"],
+    ["जानकारी चाहिए", "info"],
+    ["माहिती हवी आहे", "info"],
+    ["સ્કેન ની માહિતી", "info"],
+    ["यहां क्या है", "fallback"],
+    ["चार", "fallback"],
+  ])("%s -> %s", (text, intent) => {
+    expect(detectIntent(text)).toBe(intent);
+  });
+});
+
+describe("detectReplyLanguage", () => {
+  it("separates Marathi, Hindi, Gujarati and English transcripts", () => {
+    expect(detectLanguage("हो येणार आहे")).toBe("mr");
+    expect(detectLanguage("हाँ मैं आऊँगी")).toBe("hi");
+    expect(detectReplyLanguage("ડેટ બદલો")).toBe("gu");
+    expect(detectReplyLanguage("yes")).toBe("en");
+    expect(detectReplyLanguage("एक", "mr")).toBe("mr");
+  });
+});
+
+describe("detectDangerSign (typed and spoken, conservative)", () => {
+  it.each([
+    "bleeding since morning", "I have severe headache", "my vision is blurred", "baby is not moving", "reduced movement of baby",
+    "she had a fit", "seizure", "water is leaking", "severe pain in stomach", "khoon aa raha hai",
+    "रक्तस्राव हो रहा है", "ब्लीडिंग हो रही है", "खून आ रहा है", "तेज सिरदर्द है", "सिर में तेज दर्द", "आँखों के सामने धुंधला दिख रहा है",
+    "बच्चे की हलचल कम है", "दौरे पड़ रहे हैं", "पानी निकल रहा है", "रक्तस्त्राव होत आहे", "खूप डोकेदुखी आहे", "अंधुक दिसत आहे",
+    "बाळाची हालचाल कमी झाली", "फिट्स आल्या", "पाणी जात आहे", "લોહી પડે છે", "માથાનો દુખાવો છે", "ઝાંખું દેખાય છે", "બાળક હલનચલન ઓછું", "આંચકી આવે છે",
+    "ख़ून आ रहा है।",
+  ])("flags: %s", (text) => {
+    expect(detectDangerSign(text)).toBe(true);
+  });
+
+  it.each(["1", "हाँ मैं आऊँगी", "हो येणार आहे", "तारीख बदलना है", "yes I will come", "ડેટ બદલો", "तीन", "fitness"])("does not flag: %s", (text) => {
+    expect(detectDangerSign(text)).toBe(false);
+  });
+});
+
+describe("handleIncomingWhatsAppMessage - danger signs", () => {
+  it("replies urgently in the detected language and logs a 'reached' DANGER SIGN note (voice)", async () => {
+    inserts.length = 0;
+    const r = await handleIncomingWhatsAppMessage({ phone: "919999999999", messageText: "रक्तस्राव हो रहा है", via: "voice" });
+    expect(r.actionTaken).toBe("danger_sign");
+    expect(r.replyText).toContain("108");
+    expect(r.replyText).toContain("अस्पताल");
+    expect(inserts).toHaveLength(1);
+    expect(inserts[0]).toMatchObject({ outcome: "reached", channel: "whatsapp", patient_id: "p1", clinic_id: "c1" });
+    expect(String(inserts[0].notes)).toContain("DANGER SIGN reported by voice");
+  });
+
+  it("also applies to typed messages, in en / mr / gu", async () => {
+    inserts.length = 0;
+    const en = await handleIncomingWhatsAppMessage({ phone: "919999999999", messageText: "severe headache" });
+    expect(en.replyText).toMatch(/108/);
+    expect(String(inserts[0].notes)).toContain("DANGER SIGN reported by text");
+    const mr = await handleIncomingWhatsAppMessage({ phone: "919999999999", messageText: "डोकेदुखी आहे" });
+    expect(mr.replyText).toContain("रुग्णालयात");
+    const gu = await handleIncomingWhatsAppMessage({ phone: "919999999999", messageText: "લોહી પડે છે" });
+    expect(gu.replyText).toContain("હોસ્પિટલ");
+    expect(inserts).toHaveLength(3);
+  });
+
+  it("ordinary replies are unaffected and Gujarati intents get a Hindi reply", async () => {
+    inserts.length = 0;
+    const r = await handleIncomingWhatsAppMessage({ phone: "9999999999", messageText: "ડેટ બદલો", via: "voice" });
+    expect(r.actionTaken).toBe("reschedule_requested");
+    expect(inserts[0]).toMatchObject({ outcome: "reached" });
+    expect(String(inserts[0].notes)).not.toContain("DANGER");
   });
 });

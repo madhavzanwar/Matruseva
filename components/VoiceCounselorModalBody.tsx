@@ -16,7 +16,11 @@ import {
   Baby,
   CalendarCheck,
   WarningCircle,
+  SkipBack,
+  SkipForward,
 } from "@phosphor-icons/react";
+import { useCounselAudio } from "@/components/useCounselAudio";
+import { CounselSeekBar } from "@/components/CounselSeekBar";
 import {
   generateCounseling,
   COUNSELING_LANGUAGES,
@@ -43,6 +47,7 @@ export function VoiceCounselorModal({
   const [isPlaying, setIsPlaying] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [speechRate, setSpeechRate] = useState<number>(0.92); // Slightly slower, calm cadence
+  const [gnaniRate, setGnaniRate] = useState<number>(1.0);
   const [copied, setCopied] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
 
@@ -77,6 +82,19 @@ export function VoiceCounselorModal({
   const counseling = useMemo(() => {
     return generateCounseling({ ...data, doctorCustomNote: customNote, audioListenUrl }, lang);
   }, [data, customNote, lang, audioListenUrl]);
+
+  // Server voice (Gnani Timbre). The server builds the script from the patient's saved data, so a
+  // doctor's note typed here (client-only) can only be spoken by the browser voice.
+  const noteTyped = customNote.trim() !== "";
+  const gnani = useCounselAudio({
+    endpoint: `/api/gnani/tts/counsel?patientId=${encodeURIComponent(data.patientId)}`,
+    lang,
+    rate: gnaniRate,
+    enabled: !noteTyped,
+  });
+  const serverVoice = gnani.engine === "gnani" && !isPlaying; // false while the browser voice is speaking
+  const showPause = serverVoice ? gnani.phase === "playing" || gnani.phase === "loading" : isPlaying && !isPaused;
+  const waveActive = serverVoice ? gnani.phase === "playing" : isPlaying && !isPaused;
 
   // Estimated duration in seconds (based on word count & speech rate)
   const estimatedDuration = useMemo(() => {
@@ -133,6 +151,10 @@ export function VoiceCounselorModal({
   };
 
   const handlePlayPause = () => {
+    if (serverVoice) {
+      gnani.toggle(); // called from the tap, so audio.play() is allowed on iOS/Android
+      return;
+    }
     if (typeof window === "undefined" || !("speechSynthesis" in window)) {
       alert(t("patientDetail.counselor.ttsUnsupported"));
       return;
@@ -301,7 +323,7 @@ export function VoiceCounselorModal({
                 <button
                   key={l.code}
                   type="button"
-                  onClick={() => { stopSpeech(); setLang(l.code); }}
+                  onClick={() => { stopSpeech(); gnani.stop(); setLang(l.code); }}
                   className={`px-3 py-1.5 text-[12px] rounded-lg font-semibold transition-all cursor-pointer ${
                     lang === l.code
                       ? "bg-[var(--color-primary)] text-white shadow-xs"
@@ -323,31 +345,75 @@ export function VoiceCounselorModal({
                   type="button"
                   onClick={handlePlayPause}
                   className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-white shadow-md transition-transform active:scale-95 cursor-pointer ${
-                    isPlaying && !isPaused
+                    showPause
                       ? "bg-amber-600 hover:bg-amber-700"
                       : "bg-[var(--color-primary)] hover:bg-[var(--color-primary-hover)]"
                   }`}
-                  title={isPlaying && !isPaused ? t("patientDetail.counselor.pause") : t("patientDetail.counselor.play")}
-                  aria-label={isPlaying && !isPaused ? t("patientDetail.counselor.pause") : t("patientDetail.counselor.play")}
+                  title={showPause ? t("patientDetail.counselor.pause") : t("patientDetail.counselor.play")}
+                  aria-label={showPause ? t("patientDetail.counselor.pause") : t("patientDetail.counselor.play")}
                 >
-                  {isPlaying && !isPaused ? (
+                  {showPause ? (
                     <Pause size={20} weight="fill" />
                   ) : (
                     <Play size={20} weight="fill" className="ml-0.5" />
                   )}
                 </button>
+                {serverVoice && gnani.parts > 1 && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={gnani.prev}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-surface-2)] text-[var(--color-charcoal)] cursor-pointer"
+                      title={t("patientDetail.counselor.prevPart")}
+                      aria-label={t("patientDetail.counselor.prevPart")}
+                    >
+                      <SkipBack size={16} weight="fill" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={gnani.next}
+                      className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--color-surface-2)] text-[var(--color-charcoal)] cursor-pointer"
+                      title={t("patientDetail.counselor.nextPart")}
+                      aria-label={t("patientDetail.counselor.nextPart")}
+                    >
+                      <SkipForward size={16} weight="fill" />
+                    </button>
+                  </>
+                )}
 
                 <div>
                   <div className="flex items-center gap-2">
                     <span className="text-[13px] font-bold text-[var(--color-foreground)]">
-                      {isPlaying && !isPaused ? t("patientDetail.counselor.speaking") : isPaused ? t("patientDetail.counselor.paused") : t("patientDetail.counselor.preview")}
+                      {serverVoice
+                        ? gnani.phase === "playing"
+                          ? t("patientDetail.counselor.speaking")
+                          : gnani.phase === "loading"
+                          ? t("patientDetail.counselor.loadingAudio")
+                          : gnani.phase === "paused"
+                          ? t("patientDetail.counselor.paused")
+                          : t("patientDetail.counselor.preview")
+                        : isPlaying && !isPaused
+                        ? t("patientDetail.counselor.speaking")
+                        : isPaused
+                        ? t("patientDetail.counselor.paused")
+                        : t("patientDetail.counselor.preview")}
                     </span>
                     <span className="rounded bg-[var(--color-primary)]/10 px-1.5 py-0.2 text-[10px] font-semibold text-[var(--color-primary)]">
                       {counseling.nativeLabel}
                     </span>
                   </div>
                   <p className="text-[11px] text-[var(--color-charcoal)]">
-                    {t("patientDetail.counselor.tone", { time: formatTimer(currentTime), duration: formatTimer(estimatedDuration) })}
+                    {serverVoice
+                      ? t("patientDetail.counselor.partOf", { n: gnani.partIndex + 1, total: gnani.parts })
+                      : t("patientDetail.counselor.tone", { time: formatTimer(currentTime), duration: formatTimer(estimatedDuration) })}
+                    {" · "}
+                    <span className="font-semibold">
+                      {serverVoice
+                        ? "Gnani Timbre"
+                        : gnani.engine === "checking"
+                        ? t("patientDetail.counselor.engineChecking")
+                        : t("patientDetail.counselor.engineBrowser")}
+                    </span>
                   </p>
                 </div>
               </div>
@@ -358,10 +424,10 @@ export function VoiceCounselorModal({
                   <div
                     key={i}
                     className={`w-1 rounded-full bg-[var(--color-primary)] transition-all duration-200 ${
-                      isPlaying && !isPaused ? "opacity-90 animate-pulse" : "opacity-30"
+                      waveActive ? "opacity-90 animate-pulse" : "opacity-30"
                     }`}
                     style={{
-                      height: isPlaying && !isPaused ? `${Math.max(20, (height * (i % 2 === 0 ? 1 : 0.7)))}%` : "25%",
+                      height: waveActive ? `${Math.max(20, (height * (i % 2 === 0 ? 1 : 0.7)))}%` : "25%",
                       animationDelay: `${i * 70}ms`,
                     }}
                   />
@@ -370,27 +436,38 @@ export function VoiceCounselorModal({
             </div>
 
             {/* Progress Bar */}
-            <div className="w-full bg-[var(--color-surface-2)] h-1.5 rounded-full overflow-hidden mb-3">
-              <div
-                className="bg-[var(--color-primary)] h-full transition-all duration-300 rounded-full"
-                style={{ width: `${progressPercent}%` }}
-              />
-            </div>
+            {serverVoice && gnani.parts > 0 ? (
+              <CounselSeekBar value={gnani.progress} onCommit={gnani.seek} label={t("patientDetail.counselor.seek")} className="mb-3" />
+            ) : (
+              <div className="w-full bg-[var(--color-surface-2)] h-1.5 rounded-full overflow-hidden mb-3">
+                <div
+                  className="bg-[var(--color-primary)] h-full transition-all duration-300 rounded-full"
+                  style={{ width: `${progressPercent}%` }}
+                />
+              </div>
+            )}
+            {gnani.fellBack && gnani.engine === "browser" && (
+              <p role="status" className="mb-2 text-[11px] text-amber-800">{t("patientDetail.counselor.fallbackNotice")}</p>
+            )}
+            {noteTyped && (
+              <p className="mb-2 text-[11px] text-[var(--color-charcoal)]">{t("patientDetail.counselor.noteBrowserOnly")}</p>
+            )}
 
             {/* Playback Controls (Speed + Reset) */}
             <div className="flex items-center justify-between text-[11px] text-[var(--color-charcoal)] pt-1 border-t border-[var(--color-border)]/60">
               <div className="flex items-center gap-1.5">
                 <span>{t("patientDetail.counselor.speed")}</span>
                 {[
-                  { rate: 0.82, label: t("patientDetail.counselor.speedSlow") },
-                  { rate: 0.95, label: t("patientDetail.counselor.speedNormal") },
-                  { rate: 1.15, label: t("patientDetail.counselor.speedFast") },
+                  { rate: 0.82, audioRate: 0.85, label: t("patientDetail.counselor.speedSlow") },
+                  { rate: 0.95, audioRate: 1.0, label: t("patientDetail.counselor.speedNormal") },
+                  { rate: 1.15, audioRate: 1.15, label: t("patientDetail.counselor.speedFast") },
                 ].map((s) => (
                   <button
                     key={s.rate}
                     type="button"
                     onClick={() => {
                       setSpeechRate(s.rate);
+                      setGnaniRate(s.audioRate); // applied live to the <audio> element (playbackRate)
                       if (isPlaying) stopSpeech();
                     }}
                     className={`px-2 py-0.5 rounded text-[10px] font-medium transition cursor-pointer ${
@@ -404,10 +481,10 @@ export function VoiceCounselorModal({
                 ))}
               </div>
 
-              {isPlaying && (
+              {(serverVoice ? gnani.phase !== "idle" : isPlaying) && (
                 <button
                   type="button"
-                  onClick={stopSpeech}
+                  onClick={serverVoice ? gnani.stop : stopSpeech}
                   className="flex items-center gap-1 text-[var(--color-charcoal)] hover:text-red-600 transition cursor-pointer"
                 >
                   <ArrowCounterClockwise size={12} />

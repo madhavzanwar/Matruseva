@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { handleIncomingWhatsAppMessage } from "@/lib/whatsappBot";
+import { handleWhatsAppAudioMessage } from "@/lib/whatsappVoice";
+import { canSendWhatsApp, sendWhatsAppText } from "@/lib/whatsappMedia";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60; // voice notes: Graph download + Prisma + optional Timbre
 
 function safeEqual(a: string, b: string): boolean {
   const ab = Buffer.from(a);
@@ -15,6 +18,25 @@ function hasValidSignature(rawBody: string, header: string | null, appSecret: st
   if (!header?.startsWith("sha256=")) return false;
   const expected = createHmac("sha256", appSecret).update(rawBody).digest("hex");
   return safeEqual(header.slice("sha256=".length), expected);
+}
+
+async function processMessage(msg: { type?: string; from?: string; text?: { body?: string }; audio?: { id?: string } }) {
+  if (msg.type === "text" && msg.text?.body) {
+    const fromPhone = msg.from;
+    const result = await handleIncomingWhatsAppMessage({ phone: fromPhone, messageText: msg.text.body });
+    // If Meta Cloud API credentials are set, send the WhatsApp reply back
+    if (fromPhone && canSendWhatsApp()) {
+      try {
+        await sendWhatsAppText(fromPhone, result.replyText);
+      } catch (apiErr) {
+        console.error("Meta Graph API delivery error:", apiErr instanceof Error ? apiErr.name : "unknown");
+      }
+    }
+    return;
+  }
+  if (msg.type === "audio" && msg.audio?.id) {
+    await handleWhatsAppAudioMessage(msg);
+  }
 }
 
 /**
@@ -64,38 +86,11 @@ export async function POST(req: NextRequest) {
           const value = change.value;
           if (value?.messages && Array.isArray(value.messages)) {
             for (const msg of value.messages) {
-              if (msg.type === "text" && msg.text?.body) {
-                const fromPhone = msg.from;
-                const textBody = msg.text.body;
-
-                const result = await handleIncomingWhatsAppMessage({
-                  phone: fromPhone,
-                  messageText: textBody,
-                });
-
-                // If Meta Cloud API credentials are set, send the WhatsApp reply back
-                if (process.env.WHATSAPP_API_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID) {
-                  try {
-                    await fetch(
-                      `https://graph.facebook.com/v21.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`,
-                      {
-                        method: "POST",
-                        headers: {
-                          Authorization: `Bearer ${process.env.WHATSAPP_API_TOKEN}`,
-                          "Content-Type": "application/json",
-                        },
-                        body: JSON.stringify({
-                          messaging_product: "whatsapp",
-                          to: fromPhone,
-                          type: "text",
-                          text: { body: result.replyText },
-                        }),
-                      }
-                    );
-                  } catch (apiErr) {
-                    console.error("Meta Graph API delivery error:", apiErr);
-                  }
-                }
+              // One bad message must never fail the batch: Meta would retry the whole delivery.
+              try {
+                await processMessage(msg);
+              } catch (msgErr) {
+                console.error("WhatsApp message processing error:", msgErr instanceof Error ? msgErr.name : "unknown");
               }
             }
           }

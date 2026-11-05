@@ -14,7 +14,11 @@ import {
   PhoneCall,
   ArrowLeft,
   Sparkle,
+  SkipBack,
+  SkipForward,
 } from "@phosphor-icons/react";
+import { useCounselAudio } from "@/components/useCounselAudio";
+import { CounselSeekBar } from "@/components/CounselSeekBar";
 import {
   generateCounseling,
   COUNSELING_LANGUAGES,
@@ -45,6 +49,14 @@ const CHROME: Record<
     emergencyLead: string;
     ambulance: string;
     ttsUnsupported: string;
+    browserVoice: string;
+    connecting: string;
+    loadingAudio: string;
+    partOf: string;
+    prevPart: string;
+    nextPart: string;
+    seek: string;
+    fallbackNotice: string;
   }
 > = {
   hi: {
@@ -62,6 +74,14 @@ const CHROME: Record<
     emergencyLead: "कोई भी परेशानी होने पर तुरंत अस्पताल या आशा दीदी से संपर्क करें:",
     ambulance: "आपातकालीन एम्बुलेंस (108) को कॉल करें",
     ttsUnsupported: "इस फ़ोन के ब्राउज़र में आवाज़ सुनाने की सुविधा उपलब्ध नहीं है।",
+    browserVoice: "ब्राउज़र की आवाज़",
+    connecting: "कनेक्ट हो रहा है…",
+    loadingAudio: "आवाज़ लोड हो रही है…",
+    partOf: "भाग {n}/{total}",
+    prevPart: "पिछला भाग",
+    nextPart: "अगला भाग",
+    seek: "आवाज़ में आगे-पीछे करें",
+    fallbackNotice: "बेहतर आवाज़ अभी उपलब्ध नहीं है, इसलिए फ़ोन की आवाज़ इस्तेमाल हो रही है। सुनने के लिए चलाएँ दबाएँ।",
   },
   mr: {
     week: "आठवडा {n}",
@@ -78,6 +98,14 @@ const CHROME: Record<
     emergencyLead: "कोणताही त्रास झाल्यास त्वरित रुग्णालयात किंवा आशा ताईंशी संपर्क साधा:",
     ambulance: "आपत्कालीन रुग्णवाहिका (108) ला कॉल करा",
     ttsUnsupported: "या फोनच्या ब्राउझरमध्ये आवाज ऐकवण्याची सुविधा उपलब्ध नाही.",
+    browserVoice: "ब्राउझरचा आवाज",
+    connecting: "कनेक्ट होत आहे…",
+    loadingAudio: "आवाज लोड होत आहे…",
+    partOf: "भाग {n}/{total}",
+    prevPart: "मागील भाग",
+    nextPart: "पुढील भाग",
+    seek: "आवाजात पुढे-मागे करा",
+    fallbackNotice: "उत्तम आवाज सध्या उपलब्ध नाही, म्हणून फोनचा आवाज वापरला जात आहे. ऐकण्यासाठी चालवा दाबा.",
   },
   gu: {
     week: "અઠવાડિયું {n}",
@@ -94,6 +122,14 @@ const CHROME: Record<
     emergencyLead: "કોઈપણ તકલીફ થાય તો તરત હોસ્પિટલ અથવા આશા દીદીનો સંપર્ક કરો:",
     ambulance: "ઇમરજન્સી એમ્બ્યુલન્સ (108) ને કૉલ કરો",
     ttsUnsupported: "આ ફોનના બ્રાઉઝરમાં અવાજ સંભળાવવાની સુવિધા ઉપલબ્ધ નથી.",
+    browserVoice: "બ્રાઉઝરનો અવાજ",
+    connecting: "કનેક્ટ થઈ રહ્યું છે…",
+    loadingAudio: "અવાજ લોડ થઈ રહ્યો છે…",
+    partOf: "ભાગ {n}/{total}",
+    prevPart: "પાછલો ભાગ",
+    nextPart: "આગલો ભાગ",
+    seek: "અવાજમાં આગળ-પાછળ કરો",
+    fallbackNotice: "સારો અવાજ હાલ ઉપલબ્ધ નથી, તેથી ફોનનો અવાજ વાપરવામાં આવ્યો છે. સાંભળવા માટે ચલાવો દબાવો.",
   },
   en: {
     week: "Week {n}",
@@ -110,6 +146,14 @@ const CHROME: Record<
     emergencyLead: "If you have any problem, contact the hospital or your ASHA worker right away:",
     ambulance: "Call emergency ambulance (108)",
     ttsUnsupported: "Text-to-speech is not supported in this browser.",
+    browserVoice: "Browser voice",
+    connecting: "Connecting…",
+    loadingAudio: "Loading audio…",
+    partOf: "Part {n} of {total}",
+    prevPart: "Previous part",
+    nextPart: "Next part",
+    seek: "Seek in the audio",
+    fallbackNotice: "The clear studio voice is unavailable right now, so this phone's voice is used. Tap play to listen.",
   },
 };
 
@@ -118,12 +162,19 @@ export interface MotherAudioPlayerProps {
   initialLang?: CounselingLanguage;
   /** Public (token) view for mothers: hides the staff-only "Back" link. */
   publicView?: boolean;
+  /**
+   * Route that serves the server-built counselling audio (Gnani Timbre): the signed
+   * `/listen/<token>/audio` for mothers, `/api/gnani/tts/counsel?patientId=…` for staff.
+   * Omitted or unavailable => the browser voice (speechSynthesis) is used as before.
+   */
+  audioEndpoint?: string;
 }
 
 export function MotherAudioPlayer({
   patientData,
   initialLang = "hi",
   publicView = false,
+  audioEndpoint,
 }: MotherAudioPlayerProps) {
   const t = useT();
   const [lang, setLang] = useState<CounselingLanguage>(initialLang);
@@ -131,12 +182,26 @@ export function MotherAudioPlayer({
   const [isPaused, setIsPaused] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [speechRate, setSpeechRate] = useState(0.9);
+  const [gnaniRate, setGnaniRate] = useState(1.0);
 
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   const counseling = generateCounseling(patientData, lang);
   const ui = CHROME[lang];
+
+  // Server voice. The public link's audio is fixed to the token's language, so after the mother
+  // switches language there the browser voice (below, unchanged) takes over.
+  const gnani = useCounselAudio({
+    endpoint: audioEndpoint ?? null,
+    lang,
+    rate: gnaniRate,
+    enabled: !publicView || lang === initialLang,
+  });
+  const serverVoice = gnani.engine === "gnani" && !isPlaying; // false while the browser voice is speaking
+  const gnaniBusy = serverVoice && (gnani.phase === "playing" || gnani.phase === "loading");
+  const showPause = serverVoice ? gnaniBusy : isPlaying && !isPaused;
+  const waveActive = serverVoice ? gnani.phase === "playing" : isPlaying && !isPaused;
 
   const estimatedDuration = Math.max(
     20,
@@ -182,6 +247,10 @@ export function MotherAudioPlayer({
   };
 
   const handlePlayPause = () => {
+    if (serverVoice) {
+      gnani.toggle(); // called from the tap, so audio.play() is allowed on iOS/Android
+      return;
+    }
     if (typeof window === "undefined" || !("speechSynthesis" in window)) {
       alert(ui.ttsUnsupported);
       return;
@@ -301,6 +370,7 @@ export function MotherAudioPlayer({
                 type="button"
                 onClick={() => {
                   stopSpeech();
+                  gnani.stop();
                   setLang(l.code);
                 }}
                 className={`px-3 py-1.5 text-xs rounded-xl font-bold transition cursor-pointer ${
@@ -317,37 +387,83 @@ export function MotherAudioPlayer({
 
         {/* Prominent Play/Pause Audio Center */}
         <div className="rounded-2xl border border-[var(--color-border)] bg-[var(--color-background)] p-6 shadow-md text-center space-y-4">
-          <div className="flex justify-center items-center">
+          <div className="flex justify-center items-center gap-4">
+            {serverVoice && gnani.parts > 1 && (
+              <button
+                type="button"
+                onClick={gnani.prev}
+                className="flex h-11 w-11 items-center justify-center rounded-full bg-[var(--color-surface-2)] text-[var(--color-charcoal)] cursor-pointer active:scale-90"
+                title={ui.prevPart}
+                aria-label={ui.prevPart}
+              >
+                <SkipBack size={22} weight="fill" />
+              </button>
+            )}
             <button
               type="button"
               onClick={handlePlayPause}
               className={`flex h-20 w-20 items-center justify-center rounded-full text-white shadow-xl transition-transform active:scale-90 cursor-pointer ${
-                isPlaying && !isPaused
+                showPause
                   ? "bg-amber-600 hover:bg-amber-700"
                   : "bg-emerald-600 hover:bg-emerald-700"
               }`}
-              title={isPlaying && !isPaused ? ui.pause : ui.play}
-              aria-label={isPlaying && !isPaused ? ui.pause : ui.play}
+              title={showPause ? ui.pause : ui.play}
+              aria-label={showPause ? ui.pause : ui.play}
             >
-              {isPlaying && !isPaused ? (
+              {showPause ? (
                 <Pause size={36} weight="fill" />
               ) : (
                 <Play size={36} weight="fill" className="ml-1" />
               )}
             </button>
+            {serverVoice && gnani.parts > 1 && (
+              <button
+                type="button"
+                onClick={gnani.next}
+                className="flex h-11 w-11 items-center justify-center rounded-full bg-[var(--color-surface-2)] text-[var(--color-charcoal)] cursor-pointer active:scale-90"
+                title={ui.nextPart}
+                aria-label={ui.nextPart}
+              >
+                <SkipForward size={22} weight="fill" />
+              </button>
+            )}
           </div>
 
           <div>
             <h2 className="text-base font-bold text-[var(--color-foreground)]">
-              {isPlaying && !isPaused
+              {serverVoice
+                ? gnani.phase === "playing"
+                  ? ui.speaking
+                  : gnani.phase === "loading"
+                  ? ui.loadingAudio
+                  : gnani.phase === "paused"
+                  ? ui.paused
+                  : ui.idle
+                : isPlaying && !isPaused
                 ? ui.speaking
                 : isPaused
                 ? ui.paused
                 : ui.idle}
             </h2>
             <p className="text-xs text-[var(--color-charcoal)] font-mono mt-0.5">
-              {formatTimer(currentTime)} / {formatTimer(estimatedDuration)}
+              {serverVoice
+                ? ui.partOf.replace("{n}", String(gnani.partIndex + 1)).replace("{total}", String(gnani.parts))
+                : `${formatTimer(currentTime)} / ${formatTimer(estimatedDuration)}`}
             </p>
+            <p className="mt-1.5 flex flex-wrap items-center justify-center gap-1.5 text-[10px] font-semibold text-[var(--color-charcoal)]">
+              <span className="rounded-full bg-[var(--color-surface-2)] px-2 py-0.5">
+                {serverVoice
+                  ? "Gnani Timbre"
+                  : gnani.engine === "checking"
+                  ? ui.connecting
+                  : ui.browserVoice}
+              </span>
+            </p>
+            {gnani.fellBack && gnani.engine === "browser" && (
+              <p role="status" className="mt-1.5 text-[11px] leading-snug text-amber-800">
+                {ui.fallbackNotice}
+              </p>
+            )}
           </div>
 
           {/* Soundwave Bars */}
@@ -356,10 +472,10 @@ export function MotherAudioPlayer({
               <div
                 key={i}
                 className={`w-1.5 rounded-full bg-emerald-600 transition-all duration-200 ${
-                  isPlaying && !isPaused ? "animate-pulse" : "opacity-30"
+                  waveActive ? "animate-pulse" : "opacity-30"
                 }`}
                 style={{
-                  height: isPlaying && !isPaused ? `${h}%` : "30%",
+                  height: waveActive ? `${h}%` : "30%",
                   animationDelay: `${i * 80}ms`,
                 }}
               />
@@ -367,25 +483,30 @@ export function MotherAudioPlayer({
           </div>
 
           {/* Progress Bar */}
-          <div className="w-full bg-[var(--color-surface-2)] h-2 rounded-full overflow-hidden">
-            <div
-              className="bg-emerald-600 h-full transition-all duration-300 rounded-full"
-              style={{ width: `${progressPercent}%` }}
-            />
-          </div>
+          {serverVoice && gnani.parts > 0 ? (
+            <CounselSeekBar value={gnani.progress} onCommit={gnani.seek} label={ui.seek} />
+          ) : (
+            <div className="w-full bg-[var(--color-surface-2)] h-2 rounded-full overflow-hidden">
+              <div
+                className="bg-emerald-600 h-full transition-all duration-300 rounded-full"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+          )}
 
           {/* Speed Tuning */}
           <div className="flex items-center justify-center gap-2 pt-1 text-xs text-[var(--color-charcoal)]">
             <span>{ui.speed}</span>
             {[
-              { rate: 0.82, label: ui.slow },
-              { rate: 0.95, label: ui.normal },
+              { rate: 0.82, audioRate: 0.85, label: ui.slow },
+              { rate: 0.95, audioRate: 1.0, label: ui.normal },
             ].map((s) => (
               <button
                 key={s.rate}
                 type="button"
                 onClick={() => {
                   setSpeechRate(s.rate);
+                  setGnaniRate(s.audioRate); // applied live to the <audio> element (playbackRate)
                   if (isPlaying) stopSpeech();
                 }}
                 className={`px-2.5 py-1 rounded-lg text-xs font-semibold cursor-pointer ${
