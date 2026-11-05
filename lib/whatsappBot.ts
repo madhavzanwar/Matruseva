@@ -3,7 +3,7 @@ import { SupportedLanguage } from "@/lib/whatsapp";
 export interface BotProcessResult {
   success: boolean;
   replyText: string;
-  actionTaken: "confirmed_visit" | "reschedule_requested" | "info_provided" | "menu_sent" | "fallback";
+  actionTaken: "confirmed_visit" | "reschedule_requested" | "info_provided" | "menu_sent" | "fallback" | "danger_sign";
   patientId: string;
   patientName: string;
   outcomeLogged?: string;
@@ -62,61 +62,82 @@ export function buildAutomatedReminderMessage(opts: BotPromptOptions): string {
   );
 }
 
-/** Detects user intent from incoming text message in EN/HI/MR */
-function detectIntent(text: string): "confirm" | "reschedule" | "info" | "fallback" {
-  const t = text.trim().toLowerCase();
+/**
+ * Normalises typed OR transcribed text for matching: NFC, lower-case, drops
+ * nukta / zero-width marks, folds candrabindu to anusvara (आऊँगी == आऊंगी),
+ * and turns punctuation (incl. danda ।॥) into spaces.
+ */
+export function normalizeForMatch(text: string): string {
+  return text
+    .normalize("NFC")
+    .toLowerCase()
+    .replace(/[\u093c\u200b-\u200d\ufeff]/g, "")
+    .replace(/\u0901/g, "\u0902") // ँ -> ं
+    .replace(/\u0a81/g, "\u0a82") // Gujarati ઁ -> ં
+    .replace(/[\u0964\u0965.,!?;:"'`()\[\]{}\-_*~|\\/<>=+#@…“”‘’]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-  // 1. Confirm intents: "1", "१", "confirm", "yes", "haan", "हो", "येणार", "आएंगे", "आऊंगी", "होय"
+/** Spoken menu digits (hi/mr/gu/en + romanised) -> "1" | "2" | "3". */
+const SPOKEN_DIGITS: Record<string, "1" | "2" | "3"> = {
+  "१": "1", "૧": "1", "एक": "1", "એક": "1", one: "1", ek: "1", ik: "1", first: "1", पहला: "1", पहिला: "1",
+  "२": "2", "૨": "2", दो: "2", दोन: "2", બે: "2", two: "2", do: "2", don: "2", be: "2", दूसरा: "2", दुसरा: "2",
+  "३": "3", "૩": "3", तीन: "3", ત્રણ: "3", three: "3", teen: "3", tin: "3", tran: "3", तिसरा: "3", तीसरा: "3",
+};
+const DIGIT_FILLERS = new Set([
+  "नंबर", "नम्बर", "नं", "क्रमांक", "विकल्प", "पर्याय", "ऑप्शन", "ऑपशन", "option", "number", "no", "nambar", "number.",
+  "નંબર", "નં", "વિકલ્પ", "ऑप्शन", "दबाओ", "दाबा", "चुनें", "निवडा", "है", "आहे", "please", "चाहिए",
+]);
+
+function spokenDigit(tokens: string[]): "1" | "2" | "3" | null {
+  const rest = tokens.filter((tk) => !DIGIT_FILLERS.has(tk));
+  if (rest.length === 1) return SPOKEN_DIGITS[rest[0]] ?? null;
+  return null;
+}
+
+const hasAny = (t: string, list: readonly string[]) => list.some((w) => t.includes(w));
+
+const CONFIRM_SUBSTR = [
+  "confirm", "yes", "haan", "hanji", "visit", "येणार", "येतो", "आएंगे", "आऊंगी", "आऊंगा", "आउंगी", "आउंगा", "आएगी",
+  "आएंगी", "येईन", "येते", "होय", "कन्फर्म", "આવીશ", "આવશે", "આવું", "કન્ફર્મ",
+];
+/** Short words that must match as whole tokens (substring would hit e.g. यहां). */
+const CONFIRM_TOKENS = ["हां", "હા", "હાં"];
+const RESCHEDULE_SUBSTR = [
+  "reschedule", "call", "help", "मदत", "मदद", "कॉल", "तारीख", "बदल", "फोन", "डेट", "બદલ", "તારીખ", "ડેટ", "ફોન", "કોલ", "મદદ",
+];
+const RESCHEDULE_TOKENS = ["date", "change", "फ़ोन", "कॉल"];
+const INFO_SUBSTR = [
+  "scan", "test", "info", "prep", "instructions", "सोनोग्राफी", "तपासणी", "जांच", "तयारी", "जानकारी", "माहिती", "માહિતી",
+  "જાણકારી", "તૈયારી", "તપાસ", "સ્કેન", "સોનોગ્રાફી",
+];
+
+/** Detects user intent from incoming text (typed or transcribed) in EN/HI/MR/GU */
+export function detectIntent(text: string): "confirm" | "reschedule" | "info" | "fallback" {
+  const norm = normalizeForMatch(text);
+  const tokens = norm.split(" ").filter(Boolean);
+  const digit = spokenDigit(tokens);
+  const t = digit ?? norm;
+
+  const wantsReschedule = t === "2" || hasAny(t, RESCHEDULE_SUBSTR) || tokens.some((w) => RESCHEDULE_TOKENS.includes(w));
+
+  // 1. Confirm intents. The bare substring "हो" (typed legacy) only wins when nothing says reschedule,
+  // so "तारीख बदलनी होगी" is not mistaken for a "yes".
   if (
     t === "1" ||
-    t === "१" ||
-    t.includes("confirm") ||
-    t.includes("yes") ||
-    t.includes("haan") ||
-    t.includes("hanji") ||
-    t.includes("हो") ||
-    t.includes("येणार") ||
-    t.includes("येतो") ||
-    t.includes("आएंगे") ||
-    t.includes("आऊंगी") ||
-    t.includes("visit")
+    hasAny(t, CONFIRM_SUBSTR) ||
+    tokens.some((w) => CONFIRM_TOKENS.includes(w)) ||
+    (!wantsReschedule && t.includes("हो"))
   ) {
     return "confirm";
   }
 
-  // 2. Reschedule intents: "2", "२", "reschedule", "call", "help", "change", "मदत", "कॉल", "तारीख", "बदला", "मदद"
-  if (
-    t === "2" ||
-    t === "२" ||
-    t.includes("reschedule") ||
-    t.includes("call") ||
-    t.includes("help") ||
-    t.includes("मदत") ||
-    t.includes("मदद") ||
-    t.includes("कॉल") ||
-    t.includes("तारीख") ||
-    t.includes("बदला") ||
-    t.includes("फोन")
-  ) {
-    return "reschedule";
-  }
+  // 2. Reschedule intents
+  if (wantsReschedule) return "reschedule";
 
-  // 3. Info intents: "3", "३", "scan", "test", "info", "prep", "सोनोग्राफी", "तपासणी", "जांच", "तयारी", "डॉक्युमेंट"
-  if (
-    t === "3" ||
-    t === "३" ||
-    t.includes("scan") ||
-    t.includes("test") ||
-    t.includes("info") ||
-    t.includes("prep") ||
-    t.includes("सोनोग्राफी") ||
-    t.includes("तपासणी") ||
-    t.includes("जांच") ||
-    t.includes("तयारी") ||
-    t.includes("instructions")
-  ) {
-    return "info";
-  }
+  // 3. Info intents
+  if (t === "3" || hasAny(t, INFO_SUBSTR)) return "info";
 
   return "fallback";
 }
@@ -126,13 +147,78 @@ export function detectLanguage(text: string, fallback: SupportedLanguage = "en")
   // Check Devanagari Unicode block
   const hasDevanagari = /[\u0900-\u097F]/.test(text);
   if (hasDevanagari) {
-    // Check Marathi specific words/characters: ळ, ताई, येणार, नमस्कार, आहेत
-    if (/[\u0933]|ताई|येणार|आहेत|नमस्कार|करा|तपासणी/.test(text)) {
+    // Check Marathi specific words/characters: ळ, ताई, येणार, नमस्कार, आहे/आहेत, नाही, मला, होय
+    if (/[\u0933]|ताई|येणार|आहे|नमस्कार|करा|तपासणी|नाही|मला|होय|पाहिजे|दोन/.test(text)) {
       return "mr";
     }
     return "hi";
   }
   return fallback;
+}
+
+export type ReplyLanguage = SupportedLanguage | "gu";
+
+/** Like detectLanguage but also recognises Gujarati script (used for safety replies). */
+export function detectReplyLanguage(text: string, preferred?: SupportedLanguage): ReplyLanguage {
+  if (preferred) return preferred;
+  if (/[\u0A80-\u0AFF]/.test(text)) return "gu";
+  return detectLanguage(text, "en");
+}
+
+/**
+ * Conservative danger-sign screen for typed or transcribed messages
+ * (bleeding, severe headache, blurred vision, reduced baby movement, fits,
+ * leaking fluid, severe pain). False positives are acceptable, false negatives
+ * are not, so single keywords match (no "severe" qualifier required).
+ */
+const DANGER_PATTERNS: readonly string[] = [
+  // English / Hinglish
+  "bleed", "blood", "spotting", "headache", "head ache", "head pain", "blur", "vision", "can't see", "cannot see", "dizz", "faint",
+  "movement", "not moving", "stopped moving", "baby kick", "kicking", "fits", "seizure", "convuls", "leak", "water broke",
+  "water break", "fluid", "discharge", "pain", "cramp", "swelling", "swollen", "unconscious", "breath",
+  "blooding", "khoon", "khun", "sir dard", "sar dard", "dard", "chakkar", "dhundh", "hilna", "halchal", "pani",
+  // Hindi
+  "रक्तस्राव", "रक्त स्राव", "रक्त", "ब्लीडिंग", "ब्लिडिंग", "ब्लडिंग", "खून", "सिरदर्द", "सिर दर्द", "सर दर्द", "सरदर्द", "सिर में दर्द",
+  "धुंधल", "दिखाई नहीं", "नहीं दिख", "हलचल", "हरकत", "हिल नहीं", "हिलना", "लात", "दौरे", "दौरा", "झटके", "मिर्गी", "पानी",
+  "पानी निकल", "दर्द", "चक्कर", "बेहोश", "सूजन", "सांस",
+  // Marathi
+  "रक्तस्त्राव", "रक्तस्राव", "डोकेदुखी", "डोके दुखत", "डोकं दुखत", "अंधुक", "धूसर", "हालचाल", "हालचालं", "फिट्स", "फिट", "झटका", "आकडी",
+  "पाणी", "वेदना", "दुखत", "दुखू", "चक्कर", "भोवळ", "सूज", "दम लागत",
+  // Gujarati
+  "લોહી", "રક્તસ્રાવ", "બ્લીડિંગ", "બ્લિડિંગ", "માથાનો દુખાવો", "માથું દુખ", "માથુ દુખ", "ઝાંખ", "ઝાખ", "દેખાતું નથી", "દેખાતુ નથી",
+  "હલનચલન", "હલચલ", "બાળક હલ", "આંચકી", "આંચકા", "પાણી", "દુખાવો", "દુખે", "દર્દ", "ચક્કર", "બેભાન", "સોજો", "શ્વાસ",
+];
+const DANGER_NORMALIZED = DANGER_PATTERNS.map(normalizeForMatch);
+
+export function detectDangerSign(text: string): boolean {
+  const norm = normalizeForMatch(text);
+  if (norm.split(" ").includes("fit")) return true; // whole word only ("fit" inside other words is harmless but noisy)
+  return DANGER_NORMALIZED.some((p) => norm.includes(p));
+}
+
+export function buildDangerReply(lang: ReplyLanguage, name: string): string {
+  if (lang === "mr") {
+    return (
+      `🚨 *तातडीची सूचना, ${name} ताई:* आपण सांगितलेले लक्षण धोक्याचे असू शकते. कृपया घाबरू नका, पण वाट न पाहता *आत्ताच जवळच्या रुग्णालयात जा* किंवा *108* वर कॉल करा. ` +
+      `सोबत कुटुंबातील कोणालातरी घ्या. आमची क्लिनिक टीम आपल्याशी संपर्क साधेल.`
+    );
+  }
+  if (lang === "hi") {
+    return (
+      `🚨 *जरूरी सूचना, ${name} जी:* आपने जो लक्षण बताया वह खतरे का संकेत हो सकता है। कृपया घबराएं नहीं, लेकिन बिना देर किए *अभी नजदीकी अस्पताल जाएं* या *108* पर कॉल करें। ` +
+      `परिवार के किसी सदस्य को साथ ले जाएं। हमारी क्लिनिक टीम आपसे संपर्क करेगी।`
+    );
+  }
+  if (lang === "gu") {
+    return (
+      `🚨 *તાત્કાલિક સૂચના, ${name} બહેન:* તમે જણાવેલું લક્ષણ જોખમનું હોઈ શકે છે. કૃપા કરી ગભરાશો નહીં, પણ રાહ જોયા વગર *હમણાં જ નજીકની હોસ્પિટલ જાઓ* અથવા *108* પર કૉલ કરો. ` +
+      `પરિવારના કોઈ સભ્યને સાથે લો. અમારી ક્લિનિક ટીમ તમારો સંપર્ક કરશે.`
+    );
+  }
+  return (
+    `🚨 *Urgent, ${name}:* what you describe can be a danger sign. Please stay calm, but do not wait: *go to the nearest hospital now* or *call 108*. ` +
+    `Take a family member with you. Our clinic team will contact you.`
+  );
 }
 
 /**
@@ -144,11 +230,14 @@ export async function handleIncomingWhatsAppMessage({
   patientId,
   messageText,
   preferredLang,
+  via = "text",
 }: {
   phone?: string;
   patientId?: string;
   messageText: string;
   preferredLang?: SupportedLanguage;
+  /** How the message arrived; "voice" = transcribed WhatsApp voice note. */
+  via?: "text" | "voice";
 }): Promise<BotProcessResult> {
   const { createAdminClient } = await import("@/lib/supabase/admin");
   const admin = createAdminClient();
@@ -185,7 +274,33 @@ export async function handleIncomingWhatsAppMessage({
   }
 
   const patient = patients[0];
-  const lang = preferredLang || detectLanguage(messageText, "en");
+  const replyLang = detectReplyLanguage(messageText, preferredLang);
+
+  // SAFETY FIRST: danger signs (typed or spoken) get an urgent instruction before any intent handling.
+  if (detectDangerSign(messageText)) {
+    try {
+      await admin.from("contact_log").insert({
+        patient_id: patient.id,
+        clinic_id: patient.clinic_id,
+        channel: "whatsapp",
+        outcome: "reached",
+        notes: `DANGER SIGN reported by ${via}. Automated WhatsApp Bot: Patient said "${messageText.trim().slice(0, 300)}". Advised to go to the nearest hospital / call 108. Staff follow-up needed.`,
+      });
+    } catch (logErr) {
+      console.error("Danger sign contact_log failed:", logErr instanceof Error ? logErr.message : "unknown");
+    }
+    return {
+      success: true,
+      replyText: buildDangerReply(replyLang, patient.name),
+      actionTaken: "danger_sign",
+      patientId: patient.id,
+      patientName: patient.name,
+      outcomeLogged: "reached",
+    };
+  }
+
+  // Gujarati has no full reply catalogue here yet: answer in Hindi (closest shared script family) rather than English.
+  const lang: SupportedLanguage = replyLang === "gu" ? "hi" : replyLang;
   const intent = detectIntent(messageText);
 
   // Get clinic info for context

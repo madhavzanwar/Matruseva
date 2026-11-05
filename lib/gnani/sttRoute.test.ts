@@ -65,6 +65,21 @@ describe("POST /api/gnani/stt", () => {
     expect(mock.requests[0].fields).toMatchObject({ model: "prisma-v3.0", format: "transcribe", language_code: "hi-IN" });
     expect(JSON.parse(mock.requests[0].fields.keyterms)).toEqual(["आयरन", "x y"]);
   });
+  it("sends a fixed clinical topic and sanitised previous_text (last 600 chars)", async () => {
+    const long = "a".repeat(300) + "\u0000 \n  बीपी 130/80 " + "z".repeat(700);
+    expect((await POST(req({ extra: { previous_text: long } }))).status).toBe(200);
+    const f = mock.requests[0].fields;
+    expect(f.topic).toContain("Antenatal clinic vitals dictation");
+    expect(f.previous_text.length).toBe(600);
+    expect(f.previous_text).toMatch(/^z+$/);
+    mock.requests.length = 0;
+    await POST(req({ extra: { previous_text: "ठीक है \u0001 बीपी  130" } }));
+    expect(mock.requests[0].fields.previous_text).toBe("ठीक है बीपी 130");
+    mock.requests.length = 0;
+    await POST(req({ extra: { previous_text: "   " , topic: "client topic" } }));
+    expect(mock.requests[0].fields.previous_text).toBeUndefined();
+    expect(mock.requests[0].fields.topic).not.toBe("client topic");
+  });
   it("rejects webm (by type, extension and magic bytes)", async () => {
     for (const f of [
       { file: new Blob([wav()], { type: "audio/webm;codecs=opus" }), name: "a.webm" },

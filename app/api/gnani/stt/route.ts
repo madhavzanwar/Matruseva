@@ -23,6 +23,10 @@ const ALLOWED_MIME = new Set([
 ]);
 const FORMATS = ["verbatim", "transcribe", "codemix", "transliterate"];
 const NO_STORE = { "Cache-Control": "no-store" };
+const MAX_PREVIOUS_TEXT = 600;
+/** Fixed server-side context so Prisma biases toward clinical content (never client-supplied). */
+const STT_TOPIC =
+  "Antenatal clinic vitals dictation: blood pressure, haemoglobin, weight, foetal heart rate, fundal height, symptoms";
 const WEBM_HINT = "WebM/Opus is not supported; encode the recording as 16-bit PCM WAV before upload (developer note, not for display).";
 
 function fail(status: number, code: string, retryable = false, extra?: Record<string, unknown>, headers?: Record<string, string>) {
@@ -60,6 +64,13 @@ async function readCapped(request: Request, max: number): Promise<Uint8Array | n
   return out;
 }
 
+/** Last <=600 chars, control characters stripped, whitespace collapsed. */
+function sanitizePreviousText(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const clean = raw.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+  return clean ? clean.slice(-MAX_PREVIOUS_TEXT) : undefined;
+}
+
 function resolveLanguage(raw: string): string | null {
   const v = raw.trim();
   return toGnaniLanguage(v) ?? (isGnaniLanguageCode(v) || v === "indic-auto" || /^[a-z]{2}-IN(,[a-z]{2}-IN){1,3}$/.test(v) ? v : null);
@@ -70,6 +81,7 @@ function resolveLanguage(raw: string): string | null {
  *   audio     file   wav|mp3|ogg|flac|aac|m4a, <= 30 s, body <= 3 MB (WebM rejected)
  *   language  text   app language (en|hi|mr|gu), Gnani code, `indic-auto` or "hi-IN,en-IN"
  *   keyterms  text?  JSON array of strings (<=200, each <=40 chars)
+ *   previous_text text?  transcript so far (last 600 chars kept) for continuation segments
  *   format    text?  verbatim|transcribe (default)|codemix|transliterate
  * 200 { ok:true, transcript, detectedLanguage, requestId }
  * else { ok:false, code, retryable } (codes: see lib/gnani/errors.ts toClientError, plus
@@ -148,6 +160,8 @@ export async function POST(request: Request) {
       languageCode: language,
       format: formatRaw as SttFormat,
       keyterms,
+      topic: STT_TOPIC,
+      previousText: sanitizePreviousText(form.get("previous_text")),
     });
     return NextResponse.json(
       { ok: true, transcript: r.transcript, detectedLanguage: r.detectedLanguage ?? null, requestId: r.requestId },

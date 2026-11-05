@@ -2,15 +2,16 @@
 
 MatruSetu uses Gnani AI's speech models for the places where the product is voice-first:
 **Prisma** (speech-to-text) for dictation and WhatsApp voice notes, **Timbre** (text-to-speech)
-for the audio counselling that mothers listen to, and optionally **Evon** (reasoning model) for
-turning free-form dictation into structured vitals.
+for the audio counselling that mothers listen to, and and, as a possible extension, **Evon** (reasoning model).
 
 Everything is **server-mediated** and **optional**: with no key, or when Gnani is unavailable, the app
 falls back to the browser's Web Speech API / `speechSynthesis` exactly as before.
 
-> Status: design + implementation notes. Facts about the Gnani API come from the official docs
-> (<https://docs.gnani.ai>). The unauthenticated error shapes were verified live; transcription and
-> synthesis quality could **not** be verified without a key — run `npm run gnani:check` with yours.
+> Status: **implemented** (STT dictation, TTS counselling audio, WhatsApp voice notes, key pool, caching, fallbacks).
+> Evon is **not** wired: it has no documented hosted API, so integrating it would require a self-hosted GPU endpoint — see §3.4.
+> Facts about the Gnani API come from the official docs (<https://docs.gnani.ai>). Unauthenticated error shapes were verified live
+> against `api.vachana.ai`; transcription and synthesis quality could **not** be verified without a key — run `npm run gnani:check`
+> with yours (§7).
 
 ## 1. What Gnani gives us (and the limits that shaped the design)
 
@@ -82,10 +83,11 @@ Many mothers will answer with a voice note rather than typing. The webhook (alre
 patient's language as hint), run the same intent detection as text (confirm / reschedule / info), and reply. Notes longer than
 30 s get a friendly "please send a shorter message". Optional spoken replies use Timbre `container=ogg`.
 
-### 3.4 Evon (optional)
-Evon has open weights and no hosted API, so it is wired as an **OpenAI-compatible endpoint you host** (`EVON_BASE_URL`).
-It is used only to *extract structured vitals from dictation* behind range validation and human review. It is deliberately
-**not** used to write counselling advice: clinical wording stays deterministic and clinician-reviewed.
+### 3.4 Evon (not implemented)
+Evon v3.3 has open weights (Apache-2.0) and no documented hosted API; serving it needs an H100-class GPU (vLLM/SGLang, OpenAI-compatible).
+A possible follow-up is an optional second pass that extracts structured vitals from dictation behind range validation and human review.
+It should **not** be used to write counselling advice: clinical wording stays deterministic and clinician-reviewed. The rule-based parser
+(`lib/voiceScribe.ts`, now Devanagari-aware) already covers the common dictation patterns.
 
 ## 4. Pipeline validation — what would have broken
 
@@ -117,3 +119,30 @@ See `.env.example` (`GNANI_API_KEYS`, `GNANI_BASE_URL`, `GNANI_STT_MODEL`, `GNAN
 ```bash
 npm run gnani:check     # TTS → STT round trip in Hindi, Marathi and Gujarati, with latencies and a similarity score
 ```
+
+## 8. Implementation map
+| Piece | Where |
+|---|---|
+| Server client, key pool, errors, limits, languages | `lib/gnani/*` (`client.ts`, `pool.ts`, `errors.ts`, `limits.ts`, `languages.ts`) |
+| STT route / status route | `app/api/gnani/stt`, `app/api/gnani/status` |
+| WAV encoder + recorder (browser) | `lib/audio/wav.ts`, `lib/audio/recorder.ts` |
+| Dictation UI + Devanagari parser | `components/VoiceScribeModalContent.tsx`, `lib/voiceScribe.ts`, `lib/voiceScribeDevanagari.ts` |
+| Counselling audio (manifest + mp3 parts, cache) | `lib/gnani/counselAudio.ts`, `lib/gnani/counselRoute.ts`, `app/api/gnani/tts/counsel`, `app/listen/[token]/audio`, migration `20261106000000_tts_audio_cache.sql` |
+| Players | `components/MotherAudioPlayer.tsx`, `components/VoiceCounselorModalBody.tsx`, `components/useCounselAudio.ts` |
+| WhatsApp voice notes | `app/api/whatsapp/webhook/route.ts`, `lib/whatsappVoice.ts`, `lib/whatsappMedia.ts`, `lib/whatsappBot.ts` |
+| Service worker never-cache rule | `app/sw.ts` |
+
+## 9. What was verified, and what was not
+Verified here (mock Gnani server that follows the documented contract, real Next runtime, real Chromium with a fake microphone):
+dictation uploads a valid 16 kHz WAV with the right language/format/topic and the Devanagari transcript is parsed into BP/weight/Hb/symptoms;
+counselling audio manifest, mp3 parts, `206` range responses, cache (four identical requests = one upstream call), bad part/token handling and the
+player's playlist behaviour; three concurrent requests on one key are queued instead of hitting 429; unit tests for the pool, error mapping,
+limits, parser, WhatsApp flow (HMAC first, rate limits, failure messages, danger signs). **Not verified:** real Gnani accuracy/latency
+(Hindi/Marathi/Gujarati, noisy voice notes), real Supabase Storage, Meta's media API, real iOS/Android audio behaviour, real credit consumption.
+
+## 10. Known limitations
+* The staff counselling audio uses the generic next-visit sentence (the server can't see the doctor's note / visit date typed in the UI); the on-screen text and browser voice use the real date.
+* A mother who switches language on her signed link hears the browser voice for the new language (server audio stays in the token's language).
+* Rate limits and credit budgets are per server instance (memory). Cached audio is shared through Storage.
+* Dictation longer than 28 s is captured as consecutive clips (a recorder swap would lose audio at the seam).
+* The danger-sign keyword list, the Devanagari number/symptom tables and all Hindi/Marathi/Gujarati strings need native-speaker and clinical review.

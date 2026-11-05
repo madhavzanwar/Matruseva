@@ -35,6 +35,13 @@ Current as of 4 Nov 2026. Verified against the code, not older docs.
 - Idempotency: each entry's UUID is sent as `client_request_id` (unique partial index on `visits` and `contact_log`); a unique violation on it is treated as already applied. The key is not a secret and does not authorise anything.
 - Related: the service worker's runtime cache (`defaultCache`) may keep copies of visited authenticated pages in Cache Storage on the device; sign-out does not purge it.
 
+## Gnani AI (speech) integration
+- Keys (`GNANI_API_KEYS`) are server-only; all calls go through route handlers. `/api/gnani/*` requires a staff session; the mother's audio is served only through the signed `/listen/[token]/audio` route (invalid/expired token → empty 404).
+- Counselling text is always built **server-side** from patient data, so nobody can make the server synthesise arbitrary text with our credits. Cache hits cost nothing; misses are rate-limited per user and charged against a daily budget (per-instance memory — see GNANI_INTEGRATION.md).
+- Audio and counselling text are health data sent to a third party (Gnani). Nothing but request id, status and latency is logged. Obtain consent from mothers before sending their voice to Gnani; DPDP Act obligations apply.
+- Synthesised audio is cached in a **private** Storage bucket (`tts-audio`, service role only) keyed by a hash of the text; the service worker never caches `/api/gnani/*` or `/listen/*`.
+- WhatsApp voice notes: the webhook HMAC check runs before any media download or Gnani call; per-sender rate limits apply; transcripts are used only for intent detection and the contact-log note. A broad danger-sign screen replies urgently and flags the log for staff follow-up (false positives are intentional; the keyword list needs clinical review).
+
 ## Dependencies and CI
 - CI runs `npm audit --omit=dev --audit-level=high` and fails on high/critical advisories. At the time of writing `npm audit --omit=dev` reports 0 vulnerabilities.
 

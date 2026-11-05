@@ -4,6 +4,10 @@
  * into structured maternal vitals and clinical symptom observations.
  */
 
+import { canonicalizeDevanagari, detectDevanagariSymptoms, CLINICAL_KEYTERMS } from "@/lib/voiceScribeDevanagari";
+
+export { CLINICAL_KEYTERMS };
+
 export interface ParsedVitals {
   bpSys: number | null;
   bpDia: number | null;
@@ -48,7 +52,9 @@ const HINDI_NUMBERS: Record<string, number> = {
 
 /** Normalize spoken transcription into cleaner numeric tokens */
 function normalizeTranscript(text: string): string {
-  let normalized = text.toLowerCase()
+  // Devanagari (Hindi/Marathi, as returned by Gnani Prisma) is first rewritten into the
+  // canonical Latin/digit form below; pure Latin input passes through unchanged.
+  let normalized = canonicalizeDevanagari(text)
     .replace(/[,\/]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -93,30 +99,33 @@ export function parseVoiceToVitals(rawText: string): ParsedVitals {
   const symptoms: string[] = [];
 
   // 1. Blood Pressure: "BP 130 80", "BP 140/90", "130 over 85", "120 80"
-  const bpMatch = norm.match(/(?:bp|blood pressure|b p|rakta chaap)?\s*(\d{2,3})\s*(?:\/|over|by|aur|and|\s+)\s*(\d{2,3})/i);
+  // Keyword-anchored match first ("bp 130 80"), then the legacy un-anchored pair.
+  const bpMatch =
+    norm.match(/(?:\bbp\b|blood pressure|\bb p\b|rakta chaap)\s*(?:is|=|:)?\s*(\d{2,3})\s*(?:\/|over|by|aur|and|\s+)\s*(\d{2,3})(?!\d)/i) ??
+    norm.match(/(?:bp|blood pressure|b p|rakta chaap)?\s*(\d{2,3})\s*(?:\/|over|by|aur|and|\s+)\s*(\d{2,3})/i);
   if (bpMatch) {
     const sys = parseInt(bpMatch[1], 10);
     const dia = parseInt(bpMatch[2], 10);
-    if (sys >= 60 && sys <= 250 && dia >= 30 && dia <= 160 && sys > dia) {
+    if (sys >= 60 && sys <= 260 && dia >= 30 && dia <= 160 && sys > dia) {
       bpSys = sys;
       bpDia = dia;
     }
   }
 
   // 2. Weight: "weight 54", "vajan 54", "54 kg", "54 kilo"
-  const weightMatch = norm.match(/(?:weight|vajan|wazan|vazan|bhaar)\s*(?:is|=|:)?\s*(\d{2,3}(?:\.\d+)?)|(\d{2,3}(?:\.\d+)?)\s*(?:kg|kilo|kilogram)/i);
+  const weightMatch = norm.match(/(?:weight|vajan|wazan|vazan|bhaar)\s*(?:is|=|:)?\s*(?:kg|kilo)?\s*(\d{2,3}(?:\.\d+)?)|(\d{2,3}(?:\.\d+)?)\s*(?:kg|kilo|kilogram)/i);
   if (weightMatch) {
     const val = parseFloat(weightMatch[1] || weightMatch[2]);
-    if (val >= 30 && val <= 180) {
+    if (val >= 30 && val <= 200) {
       weight = Math.round(val * 10) / 10;
     }
   }
 
   // 3. Hemoglobin (Hb): "hb 9.5", "hemoglobin 10.2", "hb is 11", "hemoglobin 9"
-  const hbMatch = norm.match(/(?:hb|hemoglobin|hemo|khoon)\s*(?:is|=|:)?\s*(\d{1,2}(?:\.\d+)?)/i);
+  const hbMatch = norm.match(/(?:hb|hemoglobin|haemoglobin|hemo|haemo|khoon)\s*(?:is|=|:)?\s*(\d{1,2}(?:\.\d+)?)(?!\d)/i);
   if (hbMatch) {
     const val = parseFloat(hbMatch[1]);
-    if (val >= 3 && val <= 18) {
+    if (val >= 3 && val <= 20) {
       hb = Math.round(val * 10) / 10;
     }
   }
@@ -131,10 +140,10 @@ export function parseVoiceToVitals(rawText: string): ParsedVitals {
   }
 
   // 5. Fundal Height: "fundal height 28", "fundal 30", "height 26"
-  const fhMatch = norm.match(/(?:fundal height|fundal|sfh)\s*(?:is|=|:)?\s*(\d{1,2})/i);
+  const fhMatch = norm.match(/(?:fundal height|fundal|sfh)\s*(?:is|=|:)?\s*(\d{1,2})(?:\.\d+)?(?!\d)/i);
   if (fhMatch) {
     const val = parseInt(fhMatch[1], 10);
-    if (val >= 12 && val <= 45) {
+    if (val >= 10 && val <= 45) {
       fundalHeight = val;
     }
   }
@@ -148,12 +157,27 @@ export function parseVoiceToVitals(rawText: string): ParsedVitals {
     { label: "Decreased Fetal Movement", keywords: ["less movement", "no movement", "halchal kami", "halchal kam", "baby not moving"] },
     { label: "High Fever", keywords: ["fever", "bukhar", "taap", "ang garam"] },
     { label: "Abdominal Pain", keywords: ["abdominal pain", "pet dard", "potat dukhne", "cramps"] },
+    { label: "Vomiting", keywords: ["vomit", " ulti", " ulat"] },
   ];
 
-  for (const item of symptomPatterns) {
-    if (item.keywords.some((k) => norm.includes(k))) {
-      symptoms.push(item.label);
+  // "blood pressure" must not trigger the "blood" (bleeding) keyword.
+  const symText = ` ${norm.replace(/blood\s*pressure/g, " bp ").replace(/rakta chaap/g, " bp ")} `;
+  const hasLatin = (k: string) => {
+    let from = 0;
+    for (;;) {
+      const at = symText.indexOf(k, from);
+      if (at < 0) return false;
+      // "no swelling" / "without bleeding" are negations, not findings (keywords that already
+      // contain their own "no"/"not" are unaffected because they are matched as a whole).
+      if (!/(?:^|\s)(?:no|without|denies)\s+$/.test(symText.slice(0, at)) || /^(?:no|not)\b/.test(k)) return true;
+      from = at + k.length;
     }
+  };
+  for (const item of symptomPatterns) {
+    if (item.keywords.some(hasLatin)) symptoms.push(item.label);
+  }
+  for (const label of detectDevanagariSymptoms(symText)) {
+    if (!symptoms.includes(label)) symptoms.push(label);
   }
 
   return {

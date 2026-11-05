@@ -1,11 +1,34 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useState, useRef } from "react";
-import { Microphone, MicrophoneSlash, CheckCircle, Sparkle, X, ArrowRight, WarningCircle } from "@phosphor-icons/react";
-import { parseVoiceToVitals, type ParsedVitals } from "@/lib/voiceScribe";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Microphone, MicrophoneSlash, CheckCircle, Sparkle, X, ArrowRight, WarningCircle, Info } from "@phosphor-icons/react";
+import { parseVoiceToVitals, CLINICAL_KEYTERMS, type ParsedVitals } from "@/lib/voiceScribe";
 import { buttonPrimary, buttonSecondary } from "@/components/ui";
 import { useT } from "@/lib/i18n/provider";
+import { startRecording, isRecordingSupported, RecorderError, MAX_SEGMENT_MS, type ActiveRecording } from "@/lib/audio/recorder";
+import { blobToWav16k } from "@/lib/audio/wav";
+
+type Lang = "hi-IN" | "en-IN" | "mr-IN";
+type Engine = "checking" | "gnani" | "browser";
+
+/**
+ * Language hint sent to Gnani. Hindi/Marathi dictation is full of English terms (BP, Hb), so
+ * Prisma v3 gets a code-mix hint; other models only accept a single code.
+ */
+function gnaniLanguage(lang: Lang, sttModel: string | null): string {
+  if (sttModel !== "prisma-v3.0") return lang;
+  return lang === "en-IN" ? "en-IN" : `${lang},en-IN`;
+}
+
+/** Server codes that get a specific inline message (anything else falls back to the browser recogniser). */
+const SHOW_INLINE: Record<string, "visits.scribe.errTooLong" | "visits.scribe.errEmpty" | "visits.scribe.errAudioFormat"> = {
+  audio_too_long: "visits.scribe.errTooLong",
+  audio_empty: "visits.scribe.errEmpty",
+  audio_unsupported: "visits.scribe.errAudioFormat",
+};
+
+const fmt = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, "0")}`;
 
 export function VoiceScribeModalContent({
   onClose,
@@ -16,17 +39,141 @@ export function VoiceScribeModalContent({
 }) {
   const t = useT();
   const [isListening, setIsListening] = useState(false);
-  const [lang, setLang] = useState<"hi-IN" | "en-IN" | "mr-IN">("hi-IN");
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [engine, setEngine] = useState<Engine>("checking");
+  const [lang, setLang] = useState<Lang>("hi-IN");
   const [transcript, setTranscript] = useState("");
   const [parsed, setParsed] = useState<ParsedVitals | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [level, setLevel] = useState(0);
+  const [elapsed, setElapsed] = useState(0);
 
   const recognitionRef = useRef<any>(null);
+  const recRef = useRef<ActiveRecording | null>(null);
+  const transcriptRef = useRef("");
+  const browserBaseRef = useRef("");
+  const sttModelRef = useRef<string | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const aliveRef = useRef(true);
 
-  const startListening = () => {
+  const applyTranscript = useCallback((text: string) => {
+    transcriptRef.current = text;
+    setTranscript(text);
+    setParsed(parseVoiceToVitals(text));
+  }, []);
+
+  const stopTimer = () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = null;
+  };
+
+  // Decide the engine once, on open. Any failure means the browser recogniser.
+  useEffect(() => {
+    aliveRef.current = true;
+    const ctrl = new AbortController();
+    fetch("/api/gnani/status", { cache: "no-store", signal: ctrl.signal })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { enabled?: boolean; sttModel?: string } | null) => {
+        if (!aliveRef.current) return;
+        sttModelRef.current = typeof j?.sttModel === "string" ? j.sttModel : null;
+        setEngine(j?.enabled === true && isRecordingSupported() ? "gnani" : "browser");
+      })
+      .catch(() => {
+        if (aliveRef.current) setEngine("browser");
+      });
+    return () => {
+      aliveRef.current = false;
+      ctrl.abort();
+      recRef.current?.cancel();
+      recRef.current = null;
+      if (timerRef.current) clearInterval(timerRef.current);
+      try {
+        recognitionRef.current?.abort?.();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, []);
+
+  const fallbackToBrowser = () => {
+    setEngine("browser");
     setErrorMsg(null);
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    setNotice(t("visits.scribe.noticeFallback"));
+  };
+
+  /* ------------------------------------------------ Gnani (server) path */
+
+  const finishGnani = async () => {
+    const rec = recRef.current;
+    if (!rec) return;
+    recRef.current = null;
+    stopTimer();
+    setIsListening(false);
+    setLevel(0);
+    setIsTranscribing(true);
+    try {
+      const { blob } = await rec.stop();
+      const wav = await blobToWav16k(blob);
+      const fd = new FormData();
+      fd.set("audio", wav, "dictation.wav");
+      fd.set("language", gnaniLanguage(lang, sttModelRef.current));
+      fd.set("keyterms", JSON.stringify(CLINICAL_KEYTERMS));
+      const prev = transcriptRef.current.slice(-600);
+      if (prev.trim()) fd.set("previous_text", prev);
+      const res = await fetch("/api/gnani/stt", { method: "POST", body: fd });
+      const body = (await res.json().catch(() => null)) as { ok?: boolean; transcript?: string; code?: string } | null;
+      if (!aliveRef.current) return;
+      if (res.ok && body?.ok === true) {
+        const text = (body.transcript ?? "").trim();
+        if (!text) {
+          setErrorMsg(t("visits.scribe.errEmpty"));
+        } else {
+          const base = transcriptRef.current.trim();
+          applyTranscript(base ? `${base} ${text}` : text);
+        }
+      } else {
+        const inline = body?.code ? SHOW_INLINE[body.code] : undefined;
+        if (inline) setErrorMsg(t(inline));
+        else fallbackToBrowser(); // gnani_unavailable / not_configured / rate_limited / budget_exceeded / anything else
+      }
+    } catch {
+      // Network failure, undecodable audio, recorder failure: use the browser recogniser.
+      if (aliveRef.current) fallbackToBrowser();
+    } finally {
+      if (aliveRef.current) setIsTranscribing(false);
+    }
+  };
+
+  const startGnani = async () => {
+    try {
+      recRef.current = await startRecording({
+        onLevel: setLevel,
+        onLimit: () => {
+          setNotice(t("visits.scribe.limitReached", { max: Math.round(MAX_SEGMENT_MS / 1000) }));
+          void finishGnani();
+        },
+      });
+    } catch (e) {
+      const code = e instanceof RecorderError ? e.code : "failed";
+      if (code === "permission_denied") setErrorMsg(t("visits.scribe.errMicDenied"));
+      else if (code === "no_microphone") setErrorMsg(t("visits.scribe.errNoMic"));
+      else if (code === "unsupported") fallbackToBrowser();
+      else setErrorMsg(t("visits.scribe.errMic"));
+      return;
+    }
+    const startedAt = Date.now();
+    setElapsed(0);
+    stopTimer();
+    timerRef.current = setInterval(() => setElapsed((Date.now() - startedAt) / 1000), 250);
+    setIsListening(true);
+  };
+
+  /* ------------------------------------------ Browser (Web Speech) path */
+
+  const startBrowser = () => {
+    const w = window as any;
+    const SpeechRecognition = w.SpeechRecognition || w.webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
       setErrorMsg(t("visits.scribe.errUnsupported"));
@@ -38,6 +185,7 @@ export function VoiceScribeModalContent({
       recognition.lang = lang;
       recognition.continuous = true;
       recognition.interimResults = true;
+      browserBaseRef.current = transcriptRef.current.trim();
 
       recognition.onstart = () => {
         setIsListening(true);
@@ -49,8 +197,8 @@ export function VoiceScribeModalContent({
           currentText += event.results[i][0].transcript + " ";
         }
         const clean = currentText.trim();
-        setTranscript(clean);
-        setParsed(parseVoiceToVitals(clean));
+        const base = browserBaseRef.current;
+        applyTranscript(base ? `${base} ${clean}` : clean);
       };
 
       recognition.onerror = (e: any) => {
@@ -66,22 +214,32 @@ export function VoiceScribeModalContent({
 
       recognitionRef.current = recognition;
       recognition.start();
-    } catch (err: any) {
-      setErrorMsg(err.message || t("visits.scribe.errMic"));
+    } catch (err) {
+      setErrorMsg((err instanceof Error && err.message) || t("visits.scribe.errMic"));
       setIsListening(false);
     }
   };
 
+  /* ----------------------------------------------------------- controls */
+
+  const startListening = () => {
+    setErrorMsg(null);
+    setNotice(null);
+    if (engine === "gnani") void startGnani();
+    else startBrowser();
+  };
+
   const stopListening = () => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
+    if (engine === "gnani") {
+      void finishGnani();
+      return;
     }
+    recognitionRef.current?.stop();
     setIsListening(false);
   };
 
   const handleManualChange = (text: string) => {
-    setTranscript(text);
-    setParsed(parseVoiceToVitals(text));
+    applyTranscript(text);
   };
 
   const handleApply = () => {
@@ -90,6 +248,11 @@ export function VoiceScribeModalContent({
       onClose();
     }
   };
+
+  const hasResult = !!parsed && (!!parsed.bpSys || !!parsed.weight || !!parsed.hb || !!parsed.fhr || !!parsed.fundalHeight || parsed.symptoms.length > 0);
+  const maxSec = Math.round(MAX_SEGMENT_MS / 1000);
+  const engineLabel =
+    engine === "gnani" ? t("visits.scribe.engineGnani") : engine === "browser" ? t("visits.scribe.engineBrowser") : t("visits.scribe.engineChecking");
 
   const samplePrompts = [
     {
@@ -129,6 +292,12 @@ export function VoiceScribeModalContent({
                 <span className="rounded-full bg-[var(--color-primary-surface)] px-2 py-0.5 text-[10px] font-bold text-[var(--color-primary)] border border-[var(--color-primary)]/20">
                   {t("visits.scribe.badge")}
                 </span>
+                <span
+                  aria-label={t("visits.scribe.engineAria", { engine: engineLabel })}
+                  className="rounded-full bg-[var(--color-surface-2)] px-2 py-0.5 text-[10px] font-medium text-[var(--color-charcoal)] border border-[var(--color-border)]"
+                >
+                  {engineLabel}
+                </span>
               </div>
               <p className="text-[11px] text-[var(--color-charcoal)]">
                 {t("visits.scribe.subtitle")}
@@ -153,7 +322,7 @@ export function VoiceScribeModalContent({
               <span className="text-[12px] font-medium text-[var(--color-charcoal)]">{t("visits.scribe.dictLang")}</span>
               <select
                 value={lang}
-                onChange={(e) => setLang(e.target.value as "hi-IN" | "en-IN" | "mr-IN")}
+                onChange={(e) => setLang(e.target.value as Lang)}
                 className="text-[12px] rounded-[var(--radius-buttons)] border border-[var(--color-border-strong)] bg-[var(--color-background)] px-2.5 py-1 text-[var(--color-foreground)] font-medium focus:outline-none"
               >
                 <option value="hi-IN">{t("visits.scribe.optHi")}</option>
@@ -165,9 +334,10 @@ export function VoiceScribeModalContent({
             <button
               type="button"
               onClick={isListening ? stopListening : startListening}
+              disabled={isTranscribing || (engine === "checking" && !isListening)}
               className={isListening
                 ? "inline-flex min-h-9 items-center justify-center gap-1.5 rounded-[var(--radius-buttons)] bg-[var(--color-overdue)] px-4 text-[13px] font-semibold text-white animate-pulse shadow-sm"
-                : `${buttonPrimary} min-h-9 px-4 text-[13px]`
+                : `${buttonPrimary} min-h-9 px-4 text-[13px] disabled:opacity-60`
               }
             >
               {isListening ? (
@@ -183,6 +353,13 @@ export function VoiceScribeModalContent({
               )}
             </button>
           </div>
+
+          {notice && (
+            <div role="status" className="flex items-center gap-2 rounded-[var(--radius-cards)] bg-[var(--color-surface-1)] border border-[var(--color-border)] p-3 text-[12px] text-[var(--color-charcoal)]">
+              <Info size={16} className="shrink-0" />
+              <span>{notice}</span>
+            </div>
+          )}
 
           {errorMsg && (
             <div className="flex items-center gap-2 rounded-[var(--radius-cards)] bg-[var(--color-due-surface)] border border-[var(--color-due)]/30 p-3 text-[12px] text-[var(--color-foreground)]">
@@ -200,7 +377,24 @@ export function VoiceScribeModalContent({
               {isListening && (
                 <span className="flex items-center gap-1.5 text-[11px] font-medium text-[var(--color-overdue)]">
                   <span className="h-2 w-2 rounded-full bg-[var(--color-overdue)] animate-ping" />
-                  {t("visits.scribe.listening")}
+                  {engine === "gnani" ? t("visits.scribe.recordingTimer", { elapsed: fmt(elapsed), max: fmt(maxSec) }) : t("visits.scribe.listening")}
+                  {engine === "gnani" && (
+                    <span
+                      role="progressbar"
+                      aria-label={t("visits.scribe.levelAria")}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={Math.round(level * 100)}
+                      className="inline-block h-1.5 w-16 overflow-hidden rounded-full bg-[var(--color-surface-2)]"
+                    >
+                      <span className="block h-full bg-[var(--color-overdue)] transition-[width] duration-75" style={{ width: `${Math.round(level * 100)}%` }} />
+                    </span>
+                  )}
+                </span>
+              )}
+              {isTranscribing && (
+                <span role="status" className="text-[11px] font-medium text-[var(--color-charcoal)]">
+                  {t("visits.scribe.transcribing")}
                 </span>
               )}
             </div>
@@ -240,7 +434,7 @@ export function VoiceScribeModalContent({
                 <Sparkle size={15} weight="fill" className="text-[var(--color-primary)]" />
                 {t("visits.scribe.extracted")}
               </span>
-              {parsed && (parsed.bpSys || parsed.weight || parsed.hb || parsed.symptoms.length > 0) ? (
+              {hasResult ? (
                 <span className="text-[11px] font-medium text-[var(--color-on-track)] flex items-center gap-1">
                   <CheckCircle size={14} weight="fill" /> {t("visits.scribe.ready")}
                 </span>
@@ -317,7 +511,7 @@ export function VoiceScribeModalContent({
           <button
             type="button"
             onClick={handleApply}
-            disabled={!parsed || (!parsed.bpSys && !parsed.weight && !parsed.hb && parsed.symptoms.length === 0)}
+            disabled={!hasResult}
             className={`${buttonPrimary} min-h-9 px-4 text-[13px] gap-1.5`}
           >
             <span>{t("visits.scribe.apply")}</span>
