@@ -64,6 +64,10 @@ You should see **PASS** for Hindi, Marathi and Gujarati. If not, see "If somethi
 
 Do this **before** putting the new code live.
 
+> **Brand-new Supabase project (no MatruSetu tables yet)?** Paste **`supabase/fresh-setup.sql`** instead
+> of `apply-pending.sql` in step 2 below. It creates everything (all of `supabase/migrations/` in order).
+> Run it once, on an empty project only.
+
 1. Open the Supabase dashboard → your project → **SQL Editor** → **New query**.
 2. Open the file **`supabase/apply-pending.sql`** from this repo, copy **everything**, paste it, press **Run**.
 3. You should see **"Success. No rows returned"**. It is safe to run twice, and safe if some parts were already applied.
