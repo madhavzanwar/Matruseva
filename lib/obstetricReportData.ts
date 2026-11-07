@@ -3,6 +3,9 @@
  * Standardized for Indian Antenatal Care (PMSMA, FOGSI, WHO guidelines).
  */
 
+import { questionnaireToObstetricReport, type RiskFlagCode } from "@/lib/obstetricQuestionnaire";
+import type { Translator } from "@/lib/i18n/translate-client";
+
 export interface PastObstetricHistory {
   previousDeliveryMode: "NVD" | "LSCS" | "Assisted (Forceps/Vacuum)" | "None (Primi)";
   pastPreEclampsia: boolean;
@@ -428,15 +431,55 @@ export const DEMO_OBSTETRIC_RECORDS: Record<
   },
 };
 
+export interface PatientObstetricDataResult {
+  pastHistory: PastObstetricHistory;
+  familyHistory: FamilyPregnancyHistory;
+  scans: DiagnosticScanReport[];
+  /**
+   * Stable codes of the risk flags derived from the registration questionnaire
+   * (empty for patients without one). Localise with `localizeRiskFlags`.
+   */
+  questionnaireRiskFlags: RiskFlagCode[];
+}
+
+/** A stored registration questionnaire plus the translator its report notes are written with. */
+export interface QuestionnaireReportInput {
+  /** Untrusted on purpose (it comes from a JSON store): it is normalised before use. */
+  answers: unknown;
+  t: Translator;
+}
+
 /**
  * Returns comprehensive obstetric history and diagnostic scan data for any patient.
  * Generates tailored clinical records for custom patients based on Gravida/Para.
+ * When the patient has a registration questionnaire, its answers replace the
+ * generated past/family history (scans stay as they are).
  */
-export function getPatientObstetricData(patientId: string, patientName: string, gravida = 1, para = 0, rhNegative = false) {
-  if (DEMO_OBSTETRIC_RECORDS[patientId]) {
-    return DEMO_OBSTETRIC_RECORDS[patientId];
+export function getPatientObstetricData(
+  patientId: string,
+  patientName: string,
+  gravida = 1,
+  para = 0,
+  rhNegative = false,
+  questionnaire?: QuestionnaireReportInput | null,
+): PatientObstetricDataResult {
+  const base = DEMO_OBSTETRIC_RECORDS[patientId] ?? generateDefaultObstetricData(patientId, patientName, gravida, para, rhNegative);
+
+  if (questionnaire) {
+    const { pastHistory, familyHistory, derivedRiskFlags } = questionnaireToObstetricReport(questionnaire.answers, gravida, para, questionnaire.t);
+    return { pastHistory, familyHistory, scans: base.scans, questionnaireRiskFlags: derivedRiskFlags };
   }
 
+  return { ...base, questionnaireRiskFlags: [] };
+}
+
+function generateDefaultObstetricData(
+  patientId: string,
+  patientName: string,
+  gravida = 1,
+  para = 0,
+  rhNegative = false,
+): Omit<PatientObstetricDataResult, "questionnaireRiskFlags"> {
   // Derive customized medical history for any dynamically registered patient
   const isPrimi = gravida <= 1 && para === 0;
   const prevDeliveryMode = isPrimi ? "None (Primi)" : para > 0 ? "NVD" : "None (Primi)";

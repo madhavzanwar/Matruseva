@@ -141,3 +141,15 @@ screen. If a term you need is missing, add a row here in the same change.
 | Language | भाषा | भाषा | |
 | Offline | ऑफ़लाइन | ऑफलाइन | |
 | Sync | सिंक | सिंक | |
+| Primigravida (first pregnancy) | प्राइमिग्रैविडा (पहली गर्भावस्था) | प्रायमिग्रॅव्हिडा (पहिली गर्भावस्था) | Registration questionnaire; option label keeps "Primi" |
+| Multigravida | मल्टीग्रैविडा | मल्टिग्रॅव्हिडा | |
+| Instrumental delivery (vacuum/forceps) | उपकरण-सहायता से प्रसव | उपकरणांच्या साहाय्याने प्रसूती | |
+| Pregnancy loss | गर्भ हानि | गर्भहानी | Miscarriage or stillbirth |
+| Stillbirth / IUFD | मृत जन्म / IUFD | मृत जन्म / IUFD | |
+| Bad obstetric history (BOH) | खराब प्रसूति इतिहास (BOH) | वाईट प्रसूती इतिहास (BOH) | Recurrent pregnancy loss |
+| Preterm delivery | समय से पहले प्रसव | मुदतपूर्व प्रसूती | <37 weeks |
+| Gestational diabetes (GDM) | गर्भकालीन मधुमेह (GDM) | गर्भावस्थेतील मधुमेह (GDM) | |
+| Postpartum haemorrhage (PPH) | प्रसवोत्तर रक्तस्राव (PPH) | प्रसूतीनंतरचा रक्तस्राव (PPH) | |
+| Interpregnancy interval | दो गर्भावस्थाओं के बीच का अंतर | दोन गर्भावस्थांमधील अंतर | |
+| Macrosomia (large baby) | बड़ा शिशु (मैक्रोसोमिया) | मोठे बाळ (मॅक्रोसोमिया) | |
+| Thalassaemia | थैलेसीमिया | थॅलेसेमिया | |
