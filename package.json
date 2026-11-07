@@ -2,6 +2,8 @@
   "name": "matrusetu",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
+  "description": "Assistive pregnancy tracking and OPD digitisation for OB-GYN clinics in India",
   "scripts": {
     "dev": "next dev",
     "build": "next build --webpack",
