@@ -10,6 +10,7 @@ import { generateSchedule, type ScheduleTemplateItem } from "@/lib/schedule";
 import { todayInClinicTimezone, toISODate } from "@/lib/today";
 import { eddFromLmp } from "@/lib/pregnancy";
 import { addDemoPatient } from "@/lib/demo-data";
+import { questionnaireFromFormFields } from "@/lib/obstetricQuestionnaire";
 import type { CareEventKind } from "@/lib/supabase/enums";
 import { getT } from "@/lib/i18n/server";
 import type { Translator } from "@/lib/i18n/translate-client";
@@ -60,6 +61,12 @@ export async function createPatient(_prev: ActionResult, formData: FormData): Pr
   }
   const input = parsed.data;
 
+  // Past-pregnancy questionnaire (components/ObstetricQuestionnaireFields). Always
+  // validated and normalised here (unknown ids dropped, hidden answers reset), and
+  // malformed fields fall back to defaults instead of throwing. `undefined` when the
+  // form did not include it.
+  const questionnaire = questionnaireFromFormFields(raw);
+
   const cookieStore = await cookies();
   const isDemo = isDemoActive(cookieStore);
 
@@ -76,6 +83,7 @@ export async function createPatient(_prev: ActionResult, formData: FormData): Pr
       bloodGroup: input.bloodGroup || null,
       rhNegative: input.rhNegative,
       lmp: input.lmp,
+      obstetricQuestionnaire: questionnaire,
     });
 
     revalidatePath("/patients");
@@ -94,6 +102,10 @@ export async function createPatient(_prev: ActionResult, formData: FormData): Pr
     const lmpDate = new Date(y, m - 1, d);
     const calculatedEdd = toISODate(eddFromLmp(lmpDate));
 
+    // NOTE: `questionnaire` is intentionally NOT stored on this path. The `patients`
+    // table has no columns for it (adding them needs a migration, which is out of
+    // scope for now), so only the demo store above persists it. Real-mode patients
+    // keep the gravida/para-derived history on the 1-page report.
     const { data: patient, error: insertError } = await supabase
       .from("patients")
       .insert({

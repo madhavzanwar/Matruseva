@@ -4,6 +4,7 @@ import { todayInClinicTimezone, toISODate } from "@/lib/today";
 import { gestationalAge } from "@/lib/pregnancy";
 import { parseLocalDate } from "@/lib/format";
 import { patientFlags, vitalsFlags, sortFlags } from "@/lib/clinical";
+import { normalizeQuestionnaire, type NormalizedObstetricQuestionnaire } from "@/lib/obstetricQuestionnaire";
 import type { PatientRow, OpenEvent, LatestVisit } from "@/lib/snapshot";
 import type { CareEventStatus, FollowUpRisk, ContactOutcome } from "@/lib/supabase/enums";
 
@@ -41,6 +42,11 @@ export interface DemoPatientRaw {
   overdueEvents?: { name: string; kind: string; daysOverdue: number }[];
   dueEvents?: { name: string; kind: string; dueInDays: number }[];
   createdAt?: string;
+  /**
+   * Past-pregnancy questionnaire from registration. Demo store only: the real
+   * `patients` table has no columns for it (no migration), so it is not persisted there.
+   */
+  obstetricQuestionnaire?: NormalizedObstetricQuestionnaire;
 }
 
 export interface DemoVisitRecord {
@@ -558,6 +564,7 @@ function computeDemoPatientDetail(id: string, today: Date, todayIso: string) {
       closed_at: patientRaw.closedAt || null,
       closed_by: patientRaw.closedBy || null,
       created_at: patientRaw.createdAt ?? "2026-05-01T10:00:00Z",
+      obstetricQuestionnaire: patientRaw.obstetricQuestionnaire ?? null,
       updated_at: new Date().toISOString(),
     },
     careEvents: isDeliveredOrClosed
@@ -701,6 +708,7 @@ export function addDemoPatient(data: {
   rhNegative: boolean;
   lmp: string;
   edd?: string | null;
+  obstetricQuestionnaire?: NormalizedObstetricQuestionnaire;
 }): string {
   const store = getDemoStore();
   const today = todayInClinicTimezone();
@@ -735,6 +743,8 @@ export function addDemoPatient(data: {
     status: "active",
     pregnancyStatus: "active",
     createdAt: new Date().toISOString(),
+    // Re-normalised at the storage boundary: nothing unvalidated is ever persisted.
+    obstetricQuestionnaire: data.obstetricQuestionnaire ? normalizeQuestionnaire(data.obstetricQuestionnaire) : undefined,
     latestVisit: {
       daysAgo: 0,
       bpSys: 120,

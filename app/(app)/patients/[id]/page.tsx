@@ -112,7 +112,8 @@ export default async function PatientDetailPage({ params }: { params: Promise<{ 
 
   if (isDemo) {
     const demo = getDemoPatientDetail(id);
-    patient = demo.patient as PatientRecord;
+    // `unknown` hop: the demo patient also carries `obstetricQuestionnaire`, which the DB row type has no column for.
+    patient = demo.patient as unknown as PatientRecord;
     careEvents = demo.careEvents as CareEventRecord[];
     visits = demo.visits.map((v) => ({
       id: v.id,

@@ -9,6 +9,7 @@ import { todayInClinicTimezone, toISODate } from "@/lib/today";
 import { parseLocalDate } from "@/lib/format";
 import { patientFlags, vitalsFlags, sortFlags, localizeFlags } from "@/lib/clinical";
 import { getPatientObstetricData } from "@/lib/obstetricReportData";
+import { localizeRiskFlags } from "@/lib/obstetricQuestionnaire";
 import { OnePagePatientReport } from "@/components/OnePagePatientReport";
 import type { Database } from "@/lib/supabase/types";
 import type { CareEventStatus, FollowUpRisk } from "@/lib/supabase/enums";
@@ -37,11 +38,17 @@ export default async function PatientReportPage({ params }: { params: Promise<{ 
   let careEvents: CareEventRecord[] = [];
   let visits: VisitRecord[] = [];
   let riskValue: FollowUpRisk = "on_track";
+  // Registration questionnaire. Only the demo store keeps it: the real `patients`
+  // table has no columns for it (no migration), so real-mode reports always fall
+  // back to the gravida/para-derived history.
+  let storedQuestionnaire: unknown = null;
 
   if (isDemo) {
     const demo = getDemoPatientDetail(id);
     if (!demo) notFound();
-    patient = demo.patient as PatientRecord;
+    // `unknown` hop: the demo patient also carries `obstetricQuestionnaire`, which the DB row type has no column for.
+    patient = demo.patient as unknown as PatientRecord;
+    storedQuestionnaire = demo.patient.obstetricQuestionnaire;
     careEvents = demo.careEvents as CareEventRecord[];
     visits = demo.visits.map((v) => ({
       id: v.id,
@@ -112,12 +119,13 @@ export default async function PatientReportPage({ params }: { params: Promise<{ 
     }),
   ]);
 
-  const { pastHistory, familyHistory, scans } = getPatientObstetricData(
+  const { pastHistory, familyHistory, scans, questionnaireRiskFlags } = getPatientObstetricData(
     patient.id,
     patient.name,
     patient.gravida ?? 1,
     patient.para ?? 0,
-    patient.rh_negative
+    patient.rh_negative,
+    storedQuestionnaire ? { answers: storedQuestionnaire, t } : null
   );
 
   const formattedVisits = visits.map((v, idx) => {
@@ -176,7 +184,10 @@ export default async function PatientReportPage({ params }: { params: Promise<{ 
       scans={scans}
       visits={formattedVisits}
       careEvents={formattedCareEvents}
-      riskFlags={localizeFlags(clinicalFlags, t).map((f) => f.label)}
+      riskFlags={[
+        ...localizeFlags(clinicalFlags, t).map((f) => f.label),
+        ...localizeRiskFlags(questionnaireRiskFlags, t),
+      ]}
     />
   );
 }

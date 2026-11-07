@@ -3,6 +3,7 @@
 import { useActionState, useMemo, useState } from "react";
 import { createPatient, type ActionResult } from "../actions";
 import { SubmitButton } from "@/components/SubmitButton";
+import { ObstetricQuestionnaireFields } from "@/components/ObstetricQuestionnaireFields";
 import { PageHeader, card, pageBody } from "@/components/ui";
 import { eddFromLmp, formatGALocalized, gestationalAge, trimester } from "@/lib/pregnancy";
 import { useLocale, useT } from "@/lib/i18n/provider";
@@ -108,6 +109,9 @@ export default function NewPatientPage() {
             {t("patients.new.rhNegative")}
           </label>
         </Section>
+
+        {/* Past pregnancy history & clinical questionnaire: feeds the 1-page report */}
+        <ObstetricQuestionnaireFields />
 
         <Section title={t("patients.new.sectionDating")}>
           <Field id="lmp" label={t("patients.new.lmp")} className="col-span-2 sm:col-span-2">
